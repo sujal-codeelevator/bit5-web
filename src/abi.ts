@@ -8,6 +8,7 @@ export const protocolAbi = [
   { type: "function", name: "rootUser", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "sponsorOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "address" }] },
   { type: "function", name: "isRegistered", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "dailyP2PTransfers", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ name: "dayIndex", type: "uint40" }, { name: "count", type: "uint8" }] },
   { type: "function", name: "register", stateMutability: "nonpayable", inputs: [{ name: "proposedSponsor", type: "address" }], outputs: [] },
   { type: "function", name: "positionCount", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "packages", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ name: "price", type: "uint256" }, { name: "dailyRateBps", type: "uint16" }, { name: "durationDays", type: "uint16" }] },

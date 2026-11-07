@@ -10,7 +10,7 @@ const ranks = [5_000, 15_000, 35_000, 80_000, 200_000, 500_000, 1_000_000, 2_500
 type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "income" | "rank" | "transactions" | "wallet";
 type Activity = { event_name: string; amount: string | null; metadata?: { packageId?: number | string; [key: string]: unknown }; transaction_hash: string; block_timestamp: string };
 type IncomeCategory = "staking" | "direct" | "level" | "booster" | "rank";
-type TeamMember = { user_id: number | string; wallet_address: string; sponsor_address: string | null; package_id: number | null; activated_at: string | null; depth: number };
+type TeamMember = { member_code: string; wallet_address: string; sponsor_address: string | null; package_id: number | null; activated_at: string | null; depth: number };
 const money = (v?: bigint) => Number(formatUnits(v ?? 0n, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const short = (a?: string) => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "";
 const txUrl = (h?: string) => `${explorerUrl}/tx/${h}`;
@@ -70,6 +70,8 @@ export default function App() {
   const { switchChain } = useSwitchChain();
   const { data: hash, writeContract, isPending, error } = useWriteContract();
   const receipt = useWaitForTransactionReceipt({ hash });
+  const p2pTx = useWriteContract();
+  const p2pReceipt = useWaitForTransactionReceipt({ hash: p2pTx.data });
   const packageTx = useWriteContract();
   const packageReceipt = useWaitForTransactionReceipt({ hash: packageTx.data });
   const enabled = contractsConfigured && !!address;
@@ -87,6 +89,9 @@ export default function App() {
   const volume = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "teamVolume", args: [user], query });
   const leadership = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "leadershipRank", args: [user], query });
   const allocation = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5Allocation", args: [user], query });
+  const p2pRecipient = isAddress(recipient) ? recipient as `0x${string}` : zeroAddress;
+  const p2pRecipientRegistered = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "isRegistered", args: [p2pRecipient], query: { enabled: enabled && page === "wallet" && isAddress(recipient), refetchInterval: 8000 } });
+  const p2pDailyCounter = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "dailyP2PTransfers", args: [user], query: { enabled: enabled && page === "wallet", refetchInterval: 5000 } });
   const unlockAt = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5UnlockAt", args: [user], query });
   const b5Open = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5WithdrawEnabled", query });
   const owner = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "owner", query });
@@ -100,6 +105,10 @@ export default function App() {
     if (packageAction === "approval") void allowance.refetch();
     if (packageAction === "purchase") void positionCount.refetch();
   }, [packageAction, packageReceipt.data?.status, packageReceipt.data?.transactionHash]);
+
+  useEffect(() => {
+    if (p2pReceipt.data?.status === "success") void earnings.refetch();
+  }, [p2pReceipt.data?.status, p2pReceipt.data?.transactionHash]);
 
   const registered = registration.data === true;
   const active = Number(positionCount.data ?? 0n) > 0 || (!!position.data && position.data[1] > 0n);
@@ -127,6 +136,9 @@ export default function App() {
   }, [withdrawAmount]);
   const b5FeeForWithdrawal = withdrawBase * 500n / 10_000n;
   const enoughB5FeeAllowance = (b5TreasuryAllowance.data ?? 0n) >= b5FeeForWithdrawal;
+  const p2pToday = BigInt(Math.floor(Date.now() / 86_400_000));
+  const p2pDayAndCount = p2pDailyCounter.data as readonly [bigint, number] | undefined;
+  const p2pCountToday = p2pDayAndCount && p2pDayAndCount[0] === p2pToday ? Number(p2pDayAndCount[1]) : 0;
   const blockTargetValid = isAddress(blockTarget);
   const targetBlocked = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "blocked", args: [blockTargetValid ? blockTarget : zeroAddress], query: { enabled: isOwner && blockTargetValid, refetchInterval: 12000 } });
   const status = (error as any)?.shortMessage ?? error?.message ?? (receipt.isSuccess ? "Transaction confirmed." : hash ? "Transaction submitted…" : "");
@@ -160,7 +172,7 @@ export default function App() {
       .then(d => { setTeam(d.members ?? []); setTeamStatus(`${d.directCount ?? 0} direct members · ${d.teamCount ?? 0} total team members`); })
       .catch(() => !controller.signal.aborted && setTeamStatus("Team data is syncing from the chain."));
     return () => controller.abort();
-  }, [address, receipt.isSuccess, packageReceipt.data?.transactionHash]);
+  }, [address, receipt.isSuccess, packageReceipt.data?.transactionHash, p2pReceipt.data?.transactionHash]);
 
   useEffect(() => {
     if (isConnected && registration.data === false) setPage("register");
@@ -175,6 +187,10 @@ export default function App() {
   const claim = (name: "claimYield" | "withdrawPrincipal" | "claimB5") => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: name });
   const admin = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setB5WithdrawEnabled", args: [!b5Open.data] });
   const toggleBlocked = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setBlocked", args: [blockTarget as `0x${string}`, !targetBlocked.data] });
+  const startP2pTransfer = () => {
+    p2pTx.reset();
+    p2pTx.writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "p2pTransfer", args: [recipient as `0x${string}`, parseUnits(transferAmount || "0", 18)] });
+  };
 
   if (!isConnected) return <Login connect={connect} />;
 
@@ -218,7 +234,7 @@ export default function App() {
         {registered && page === "income" && <IncomePage earnings={earnings.data} pendingYield={pendingYield.data} activity={activity} activityStatus={activityStatus} />}
         {registered && page === "rank" && <RankPage rank={Number(leadership.data ?? 0)} volume={volume.data} directs={directs.data} />}
         {registered && page === "transactions" && <TransactionsPage activity={activity} activityStatus={activityStatus} />}
-        {registered && page === "wallet" && <WalletPage recipient={recipient} setRecipient={setRecipient} amount={transferAmount} setAmount={setTransferAmount} isPending={isPending} send={() => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "p2pTransfer", args: [recipient as `0x${string}`, parseUnits(transferAmount || "0", 18)] })} status={status} hash={hash} />}
+        {registered && page === "wallet" && <WalletPage address={address} recipient={recipient} setRecipient={setRecipient} recipientRegistered={p2pRecipientRegistered.data} recipientChecking={p2pRecipientRegistered.isLoading} dailyCount={p2pCountToday} amount={transferAmount} setAmount={setTransferAmount} balance={earnings.data} isPending={p2pTx.isPending} receiptPending={p2pReceipt.isLoading} confirmed={p2pReceipt.data?.status === "success"} failed={p2pReceipt.isError} error={p2pTx.error ? (p2pTx.error as any)?.shortMessage ?? p2pTx.error.message : (p2pReceipt.error as any)?.shortMessage ?? p2pReceipt.error?.message} send={startP2pTransfer} status={p2pTx.isPending ? "Confirm the transfer in your wallet…" : p2pTx.data ? "Transaction submitted. Waiting for BNB Smart Chain confirmation…" : ""} hash={p2pTx.data} clearResult={() => p2pTx.reset()} />}
       </main>
     </div>
   </div>;
@@ -299,18 +315,23 @@ function TeamPage({ title, subtitle, members, rootAddress, genealogy = false }: 
     if (parent) parent.children.push(node); else roots.push(node);
   }
   const visibleNodes = genealogy ? roots.slice(0, 100) : members;
-  return <div className="page-stack"><section className="stat-grid"><Stat label="Direct referrals" value={String(members.filter(m => Number(m.depth) === 0).length)} note="Your first-level team" icon="♧" /><Stat label="Network members" value={String(members.length)} note="Indexed on-chain registrations" icon="◇" /><Stat label="Active packages" value={String(members.filter(m => m.package_id !== null).length)} note="Members with a package purchase" icon="＋" /><Stat label="Team activity" value={members.length ? "Active" : "Waiting"} note="Updates as registrations index" icon="◷" /></section><section className="content-card"><PageHeading title={title} subtitle={subtitle} />{!members.length ? <p className="empty-state">No team registrations are indexed yet. Member IDs and wallet addresses will appear here after the indexer syncs their on-chain registrations.</p> : genealogy ? <><div className="level-summary">{Array.from({ length: Math.min(10, Math.max(...members.map(m => Number(m.depth) + 1), 1)) }, (_, level) => <span key={level}>Level {level + 1}<b>{members.filter(m => Number(m.depth) === level).length}</b></span>)}</div><div className="genealogy-viewport"><div className="genealogy-chart"><div className="genealogy-root"><TeamNodeCard address={rootAddress ?? ""} isRoot /></div><div className="genealogy-branches">{visibleNodes.map(node => <TeamNode key={node.wallet_address} node={node} />)}</div></div></div>{roots.length > 100 && <p className="helper-copy">Showing the first 100 direct branches in the chart. Team List includes all direct referrals.</p>}</> : <div className="team-table-wrap"><table className="member-table"><thead><tr><th>User ID</th><th>Member wallet</th><th>Status</th><th>Package</th><th>Joined / activated</th><th>Explore</th></tr></thead><tbody>{members.map(member => <tr key={member.wallet_address}><td>#{member.user_id}</td><td>{short(member.wallet_address)}</td><td><span className={`table-badge ${member.package_id == null ? "badge-pending" : "badge-active"}`}>{member.package_id == null ? "Registered" : "Active"}</span></td><td>{member.package_id == null ? "—" : packages[member.package_id]?.name ?? "Package"}</td><td>{member.activated_at ? new Date(member.activated_at).toLocaleDateString() : "Awaiting package"}</td><td><a href={`${explorerUrl}/address/${member.wallet_address}`} target="_blank" rel="noreferrer">BscScan ↗</a></td></tr>)}</tbody></table></div>}</section></div>;
+  return <div className="page-stack"><section className="stat-grid"><Stat label="Direct referrals" value={String(members.filter(m => Number(m.depth) === 0).length)} note="Your first-level team" icon="♧" /><Stat label="Network members" value={String(members.length)} note="Indexed on-chain registrations" icon="◇" /><Stat label="Active packages" value={String(members.filter(m => m.package_id !== null).length)} note="Members with a package purchase" icon="＋" /><Stat label="Team activity" value={members.length ? "Active" : "Waiting"} note="Updates as registrations index" icon="◷" /></section><section className="content-card"><PageHeading title={title} subtitle={subtitle} />{!members.length ? <p className="empty-state">No team registrations are indexed yet. Member IDs and wallet addresses will appear here after the indexer syncs their on-chain registrations.</p> : genealogy ? <><div className="level-summary">{Array.from({ length: Math.min(10, Math.max(...members.map(m => Number(m.depth) + 1), 1)) }, (_, level) => <span key={level}>Level {level + 1}<b>{members.filter(m => Number(m.depth) === level).length}</b></span>)}</div><div className="genealogy-viewport"><div className="genealogy-chart"><div className="genealogy-root"><TeamNodeCard address={rootAddress ?? ""} isRoot /></div><div className="genealogy-branches">{visibleNodes.map(node => <TeamNode key={node.wallet_address} node={node} />)}</div></div></div>{roots.length > 100 && <p className="helper-copy">Showing the first 100 direct branches in the chart. Team List includes all direct referrals.</p>}</> : <div className="team-table-wrap"><table className="member-table"><thead><tr><th>Member ID</th><th>Member wallet</th><th>Status</th><th>Package</th><th>Joined / activated</th><th>Explore</th></tr></thead><tbody>{members.map(member => <tr key={member.wallet_address}><td><b>{member.member_code ?? "Assigning ID…"}</b></td><td>{short(member.wallet_address)}</td><td><span className={`table-badge ${member.package_id == null ? "badge-pending" : "badge-active"}`}>{member.package_id == null ? "Registered" : "Active"}</span></td><td>{member.package_id == null ? "—" : packages[member.package_id]?.name ?? "Package"}</td><td>{member.activated_at ? new Date(member.activated_at).toLocaleDateString() : "Awaiting package"}</td><td><a href={`${explorerUrl}/address/${member.wallet_address}`} target="_blank" rel="noreferrer">BscScan ↗</a></td></tr>)}</tbody></table></div>}</section></div>;
 }
 
 function TeamNode({ node }: { node: TeamMember & { children: (TeamMember & { children: any[] })[] } }) { return <div className="genealogy-node"><TeamNodeCard address={node.wallet_address} member={node} />{node.children.length > 0 && <div className="genealogy-children">{node.children.map(child => <TeamNode key={child.wallet_address} node={child} />)}</div>}</div>; }
-function TeamNodeCard({ address, member, isRoot = false }: { address: string; member?: TeamMember; isRoot?: boolean }) { return <a className={`genealogy-card ${isRoot ? "root-card" : ""}`} href={isRoot ? undefined : `${explorerUrl}/address/${address}`} target={isRoot ? undefined : "_blank"} rel={isRoot ? undefined : "noreferrer"}><span className="genealogy-avatar">{isRoot ? "B5" : address.slice(2, 4).toUpperCase()}</span><b>{isRoot ? "You" : `ID #${member?.user_id ?? "—"}`}</b><small>{short(address)} · {isRoot ? "Root account" : member?.package_id == null ? "Registered" : packages[member.package_id]?.name ?? "Package member"}</small><i className={member?.package_id == null && !isRoot ? "inactive-node" : "active-node"}>{isRoot || member?.package_id !== null ? "● Active" : "● Registered"}</i></a>; }
+function TeamNodeCard({ address, member, isRoot = false }: { address: string; member?: TeamMember; isRoot?: boolean }) { return <a className={`genealogy-card ${isRoot ? "root-card" : ""}`} href={isRoot ? undefined : `${explorerUrl}/address/${address}`} target={isRoot ? undefined : "_blank"} rel={isRoot ? undefined : "noreferrer"}><span className="genealogy-avatar">{isRoot ? "B5" : address.slice(2, 4).toUpperCase()}</span><b>{isRoot ? "You" : member?.member_code ?? "Assigning ID…"}</b><small>{short(address)} · {isRoot ? "Root account" : member?.package_id == null ? "Registered" : packages[member.package_id]?.name ?? "Package member"}</small><i className={member?.package_id == null && !isRoot ? "inactive-node" : "active-node"}>{isRoot || member?.package_id !== null ? "● Active" : "● Registered"}</i></a>; }
 
 function TransactionsPage({ activity, activityStatus }: { activity: Activity[]; activityStatus: string }) {
   return <div className="page-stack"><section className="content-card"><PageHeading title="Transactions" subtitle={activityStatus} /><ActivityList activity={activity} /></section></div>;
 }
 
-function WalletPage({ recipient, setRecipient, amount, setAmount, isPending, send, status, hash }: any) {
-  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="P2P Wallet Transfer" subtitle="Send internal earnings to another Bit Five member" /><label className="field-label">Recipient wallet<input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x…" /></label><label className="field-label">Amount in USDT<input type="number" value={amount} onChange={e => setAmount(e.target.value)} /></label><p className="helper-copy">P2P transfers apply the plan's 1% fee.</p><button className="btn primary action-wide" disabled={isPending || !isAddress(recipient) || !Number(amount)} onClick={send}>{isPending ? "Confirm in wallet…" : "Send balance"}</button>{status && <TxStatus status={status} hash={hash} />}</section></div>;
+function WalletPage({ address, recipient, setRecipient, recipientRegistered, recipientChecking, dailyCount, amount, setAmount, balance, isPending, receiptPending, confirmed, failed, error, send, status, hash, clearResult }: any) {
+  const locked = isPending || receiptPending;
+  const clearThen = (setter: (value: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!locked) clearResult();
+    setter(event.target.value);
+  };
+  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="P2P Wallet Transfer" subtitle="Send internal earnings to another registered Bit Five member" /><div className="withdraw-balance"><small>AVAILABLE INTERNAL BALANCE</small><b>${money(balance)}</b><span>Recipient receives 99% after the 1% transfer fee.</span></div><label className="field-label">Recipient wallet<input value={recipient} onChange={clearThen(setRecipient)} placeholder="0x…" disabled={locked} /></label>{isAddress(recipient) && <p className="helper-copy">{recipientChecking ? "Checking recipient registration on V7…" : recipientRegistered ? "Registered Bit Five member ✓" : "This wallet is not registered on V7."}</p>}<label className="field-label">Amount in USDT<input type="number" min="0.01" value={amount} onChange={clearThen(setAmount)} disabled={locked} /></label><p className="helper-copy">P2P transfers apply the plan's 1% fee. Daily outgoing transfers: {dailyCount}/2 · resets at 05:30 IST.</p>{dailyCount >= 2 && <Notice tone="amber" text="You have reached today's two-transfer limit. It resets at 05:30 IST." />}<button className="btn primary action-wide" disabled={locked || confirmed || !isAddress(recipient) || recipientRegistered !== true || recipientChecking || recipient.toLowerCase() === address?.toLowerCase() || dailyCount >= 2 || !Number(amount) || Number(amount) > Number(formatUnits(balance ?? 0n, 18))} onClick={send}>{isPending ? "Confirm in wallet…" : receiptPending ? "Waiting for on-chain confirmation…" : confirmed ? "Transfer confirmed ✓" : "Send balance"}</button>{status && !confirmed && !failed && <TxStatus status={status} hash={hash} />}{failed && <Notice tone="amber" text={error || "The transfer failed on-chain. Check the transaction on BscScan before retrying."} />}{confirmed && <div className="notice notice-green"><b>P2P transfer confirmed on BNB Smart Chain.</b><br />The recipient received 99% of the amount after the 1% fee. Your internal balance is refreshing. <TxStatus status="" hash={hash} /></div>}</section></div>;
 }
 
 function ActivityList({ activity }: { activity: Activity[] }) {

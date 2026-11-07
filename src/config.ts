@@ -2,7 +2,7 @@ import { createAppKit } from "@reown/appkit/react";
 import { defineChain } from "@reown/appkit/networks";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 
-export const protocolAddress = (import.meta.env.VITE_PROTOCOL_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
+export const protocolAddress = (import.meta.env.VITE_PROTOCOL_ADDRESS ?? "0xfac4592AF64da9165f4545B49Ed734A6C693546E") as `0x${string}`;
 export const usdtAddress = (import.meta.env.VITE_USDT_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 export const b5Address = (import.meta.env.VITE_B5_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 export const b5TreasuryAddress = "0x95Cf6ed3660F2284a1236636502e57f5921d5154" as `0x${string}`;
