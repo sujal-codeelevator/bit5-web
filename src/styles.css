@@ -38,8 +38,8 @@
 
 .topup-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 18px}
 .topup-step{min-width:0;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #203953;border-radius:9px;background:#0a1929;color:#7790a9}
-.topup-step>span{flex:0 0 25px;width:25px;height:25px;display:grid;place-items:center;border:1px solid #2b4660;border-radius:50%;font-size:9px;font-weight:800}
-.topup-step>b{font-size:9px;font-weight:600;line-height:1.3}
+.topup-step>span{flex:0 0 25px;width:25px;height:25px;display:grid;place-items:center;border:1px solid #2b4660;border-radius:50%;font-size:10px;font-weight:800}
+.topup-step>b{font-size:10px;font-weight:600;line-height:1.3}
 .topup-step.step-current{border-color:#2d79a7;background:#0c2940;color:#d9f1ff}
 .topup-step.step-current>span{border-color:#49b7f0;background:#123f5e;color:#83d5ff}
 .topup-step.step-done{border-color:#1c654e;color:#a3d8c5}
@@ -52,7 +52,7 @@
 .purchase-success-copy{max-width:400px;color:#8198ad!important;line-height:1.55}
 .purchase-success-actions{display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:18px}
 .inline-explorer{display:inline-block;margin-left:7px;color:#70d0ff;font-size:10px;font-weight:700}
-@media(max-width:600px){.topup-steps{grid-template-columns:1fr 1fr}.topup-step{min-height:47px;padding:8px}.topup-step>b{font-size:8px}.purchase-success{padding:22px 10px 14px}.purchase-success h2{font-size:18px}.purchase-success-actions{width:100%;flex-direction:column;gap:8px}.purchase-success-actions .btn{width:100%}}
+@media(max-width:600px){.topup-steps{grid-template-columns:1fr 1fr}.topup-step{min-height:47px;padding:8px}.topup-step>span{font-size:10px}.topup-step>b{font-size:9px}.purchase-success{padding:22px 10px 14px}.purchase-success h2{font-size:18px}.purchase-success-actions{width:100%;flex-direction:column;gap:8px}.purchase-success-actions .btn{width:100%}}
 
 /* Client request: bold typography across the member panel and login, with a stronger wallet balance. */
 .member-layout *, .auth-shell *{font-weight:700!important}
