@@ -9,10 +9,29 @@ const packages = [{ name: "Basic", price: 50, rate: 1.5, days: 134 }, { name: "S
 const ranks = [5_000, 15_000, 35_000, 80_000, 200_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000];
 type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "income" | "rank" | "transactions" | "wallet";
 type Activity = { event_name: string; amount: string | null; metadata?: { packageId?: number | string; [key: string]: unknown }; transaction_hash: string; block_timestamp: string };
+type IncomeCategory = "staking" | "direct" | "level" | "booster" | "rank";
 type TeamMember = { user_id: number | string; wallet_address: string; sponsor_address: string | null; package_id: number | null; activated_at: string | null; depth: number };
 const money = (v?: bigint) => Number(formatUnits(v ?? 0n, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const short = (a?: string) => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "";
 const txUrl = (h?: string) => `${explorerUrl}/tx/${h}`;
+const incomeCategory = (item: Activity): IncomeCategory | null => {
+  if (item.event_name === "YieldClaimed") return "staking";
+  if (item.event_name !== "IncomeCredited") return null;
+  const type = String(item.metadata?.incomeType ?? "").toLowerCase();
+  if (type === "0x5f0a5f78118b6e0b700e0357ae3909aaafe8fa706a075935688657cf4135f9a9") return "direct";
+  if (type === "0xaa7ef1d11da7ae8b20914b6a200903893345e4c731dcaa7e093a709901ae1ec9") return "level";
+  if (type === "0x1ae9eabba91b8cbaee42b8f1062cf8ceac780e74cce3068bc2adc286d3f37c97") return "booster";
+  if (type === "0xc5654be4efc89097db13a087f3077e725ed1287a5ffd506c4522a3eb1ded2674") return "rank";
+  return null;
+};
+const incomeCategories: { key: "all" | IncomeCategory; label: string }[] = [
+  { key: "all", label: "All incomes" },
+  { key: "staking", label: "Staking ROI" },
+  { key: "direct", label: "Direct sponsor" },
+  { key: "level", label: "Level commission" },
+  { key: "booster", label: "B Plus Booster" },
+  { key: "rank", label: "Rank income" }
+];
 const eventTitle = (item: Activity) => {
   if (item.event_name === "IncomeCredited") {
     const incomeType = String(item.metadata?.incomeType ?? "").toLowerCase();
@@ -20,11 +39,11 @@ const eventTitle = (item: Activity) => {
       "0x1ae9eabba91b8cbaee42b8f1062cf8ceac780e74cce3068bc2adc286d3f37c97": "B PLUS BOOSTER Income credited",
       "0x5f0a5f78118b6e0b700e0357ae3909aaafe8fa706a075935688657cf4135f9a9": "Team Direct income credited",
       "0xaa7ef1d11da7ae8b20914b6a200903893345e4c731dcaa7e093a709901ae1ec9": "Level income credited",
-      "0xc5654be4efc89097db13a087f3077e725ed1287a5ffd506c4522a3eb1ded2674": "Leadership income credited"
+      "0xc5654be4efc89097db13a087f3077e725ed1287a5ffd506c4522a3eb1ded2674": "Rank income credited"
     } as Record<string, string>)[incomeType] ?? "Team income credited";
   }
   const name = item.event_name;
-  return ({ Registered: "Joined the network", Activated: "Package purchased", YieldClaimed: "Daily return claimed", EarningsWithdrawn: "USDT withdrawal", PrincipalWithdrawn: "Principal withdrawal", B5Claimed: "B5 claimed", P2PTransferred: "P2P transfer", UserBlockChanged: "Account status changed" }[name] ?? name.replace(/([A-Z])/g, " $1").trim());
+  return ({ Registered: "Joined the network", Activated: "Package purchased", YieldClaimed: "Staking ROI credited", EarningsWithdrawn: "USDT withdrawal", PrincipalWithdrawn: "Principal withdrawal", B5Claimed: "B5 claimed", P2PTransferred: "P2P transfer", UserBlockChanged: "Account status changed" }[name] ?? name.replace(/([A-Z])/g, " $1").trim());
 };
 
 export default function App() {
@@ -150,15 +169,15 @@ export default function App() {
 
   if (!isConnected) return <Login connect={connect} />;
 
-  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Topup / Packages", withdraw: "Withdraw", income: "Income Report", rank: "My Rank", transactions: "Transactions", wallet: "Wallet Actions" };
+  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Top-up / Packages", withdraw: "Withdrawal", income: "Income Report", rank: "My Rank", transactions: "Transaction", wallet: "P2P Wallet Transfer" };
   const navItems: { key: Page; icon: string; label: string }[] = [
     { key: "dashboard", icon: "▦", label: "Dashboard" },
-    { key: "topup", icon: "＋", label: "Topup" },
-    { key: "withdraw", icon: "↗", label: "Withdraw" },
+    { key: "topup", icon: "＋", label: "Top-up" },
+    { key: "withdraw", icon: "↗", label: "Withdrawal" },
     { key: "income", icon: "▤", label: "Income Report" },
     { key: "rank", icon: "◇", label: "My Rank" },
-    { key: "transactions", icon: "◷", label: "Transactions" },
-    { key: "wallet", icon: "⇄", label: "Wallet Actions" },
+    { key: "transactions", icon: "◷", label: "Transaction" },
+    { key: "wallet", icon: "⇄", label: "P2P Wallet Transfer" },
   ];
 
   return <div className="member-layout">
@@ -166,10 +185,13 @@ export default function App() {
     <aside className={`member-sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
       <button className="member-brand" onClick={() => go("dashboard")}><img src="/brand.jpeg" alt="" /><span><b>BIT FIVE</b><small>MEMBER PANEL</small></span><i className="sidebar-close" onClick={e => { e.stopPropagation(); setMobileOpen(false); }}>×</i></button>
       <small className="menu-caption">MAIN MENU</small>
-      {registered && <button className={`member-nav ${page === "team" || page === "genealogy" ? "selected" : ""}`} onClick={() => setTeamOpen(v => !v)}><i>♧</i><span>Team</span><b className={teamOpen ? "turn" : ""}>⌄</b></button>}
-      {registered && teamOpen && <div className="member-subnav"><button className={page === "team" ? "selected" : ""} onClick={() => go("team")}>Team List</button><button className={page === "genealogy" ? "selected" : ""} onClick={() => go("genealogy")}>Genealogy Tree</button></div>}
       {!registered && <button className={`member-nav ${page === "register" ? "selected" : ""}`} onClick={() => go("register")}><i>＋</i><span>Register</span></button>}
-      {registered && navItems.map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
+      {registered && <>
+        {navItems.slice(0, 3).map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
+        <button className={`member-nav ${page === "team" || page === "genealogy" ? "selected" : ""}`} onClick={() => setTeamOpen(v => !v)}><i>♧</i><span>Team</span><b className={teamOpen ? "turn" : ""}>⌄</b></button>
+        {teamOpen && <div className="member-subnav"><button className={page === "team" ? "selected" : ""} onClick={() => go("team")}>Team List</button><button className={page === "genealogy" ? "selected" : ""} onClick={() => go("genealogy")}>Genealogy Tree</button></div>}
+        {navItems.slice(3).map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
+      </>}
       <div className="sidebar-bottom"><small>BSC MAINNET · CHAIN 56</small><a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer">View protocol on BscScan ↗</a></div>
     </aside>
 
@@ -203,7 +225,7 @@ function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registra
 }
 
 function Dashboard({ address, active, count, earnings, pendingYield, allocation, directs, volume, leadership, b5Open, unlockAt, activity, go, copied, onCopy, claim, isPending, isOwner, admin, blockTarget, setBlockTarget, blockTargetValid, targetBlocked, onBlock }: any) {
-  return <div className="page-stack"><section className="dashboard-welcome"><div><small>MEMBER DASHBOARD</small><h2>Welcome back, {short(address)}</h2><p>{active ? `${count} package position${count === 1 ? "" : "s"} active on-chain` : "Your profile is ready. Choose a package to get started."}</p></div><button className="btn primary" onClick={() => go("topup")}>{active ? "Buy another package" : "Topup now"} →</button></section>
+  return <div className="page-stack dashboard-page"><section className="dashboard-welcome"><div><small>MEMBER DASHBOARD</small><h2>Welcome back, {short(address)}</h2><p>{active ? `${count} package position${count === 1 ? "" : "s"} active on-chain` : "Your profile is ready. Choose a package to get started."}</p></div><button className="btn primary" onClick={() => go("topup")}>{active ? "Buy another package" : "Topup now"} →</button></section>
     <section className="content-card referral-panel"><div><span className="mini-icon">↗</span><div><h3>Your referral link</h3><p>Share it to invite a new member. Their registration and sponsor are recorded on-chain.</p></div></div><div className="copy-row"><input readOnly value={`${window.location.origin}/?ref=${address}`} /><button className="btn outline" onClick={onCopy}>{copied ? "Copied ✓" : "Copy link"}</button></div></section>
     <section className="stat-grid"><Stat label="Total team" value={String(Number(directs ?? 0))} note={`Team volume $${money(volume)}`} icon="♧" /><Stat label="Available income" value={`$${money(earnings)}`} note="Internal USDT balance" icon="$" /><Stat label="Pending daily return" value={`$${money(pendingYield)}`} note="Daily close at 5:30 AM IST" icon="◷" /><Stat label="B5 allocation" value={`${money(allocation)} B5`} note={b5Open ? "Wallet claims enabled" : "Unlock at day 180 · currently off"} icon="B⁵" /></section>
     <div className="dashboard-columns"><section className="content-card"><PageHeading title="Account overview" subtitle="Your package and network snapshot" /><div className="overview-list"><Overview label="Account status" value={active ? "Active" : "Registered"} tone="green" /><Overview label="Package positions" value={String(count)} /><Overview label="Leadership rank" value={Number(leadership ?? 0) ? `Bit-${leadership}` : "Not ranked yet"} /><Overview label="Team volume" value={`$${money(volume)}`} /><Overview label="Direct members" value={String(Number(directs ?? 0))} /></div><button className="text-link" onClick={() => go("rank")}>View rank details →</button></section><section className="content-card"><PageHeading title="Quick actions" subtitle="Common member actions" /><div className="quick-actions"><QuickAction icon="＋" label="Buy a package" onClick={() => go("topup")} /><QuickAction icon="↗" label="Withdraw income" onClick={() => go("withdraw")} /><QuickAction icon="▤" label="Income report" onClick={() => go("income")} /><QuickAction icon="♧" label="View my team" onClick={() => go("team")} /></div></section></div>
@@ -248,14 +270,16 @@ function WithdrawPage({ earnings, amount, setAmount, allowance, enoughAllowance,
 }
 
 function IncomePage({ earnings, pendingYield, activity, activityStatus }: any) {
-  const incomeEvents = activity.filter((x: Activity) => ["IncomeCredited", "YieldClaimed", "EarningsWithdrawn", "P2PTransferred"].includes(x.event_name));
-  return <div className="page-stack"><section className="stat-grid"><Stat label="Available USDT income" value={`$${money(earnings)}`} note="Withdrawable internal balance" icon="$" /><Stat label="Pending return" value={`$${money(pendingYield)}`} note="Daily close at 5:30 AM IST" icon="◷" /><Stat label="Income entries" value={String(incomeEvents.length)} note="Recent indexed entries" icon="▤" /><Stat label="Network" value="BSC" note="On-chain records" icon="◇" /></section><section className="content-card"><PageHeading title="Income report" subtitle={activityStatus} /><ActivityList activity={incomeEvents} /></section></div>;
+  const [selectedCategory, setSelectedCategory] = useState<"all" | IncomeCategory>("all");
+  const incomeEvents = activity.filter((item: Activity) => incomeCategory(item) !== null);
+  const visibleEvents = selectedCategory === "all" ? incomeEvents : incomeEvents.filter((item: Activity) => incomeCategory(item) === selectedCategory);
+  return <div className="page-stack"><section className="stat-grid"><Stat label="Available USDT income" value={`$${money(earnings)}`} note="Withdrawable internal balance" icon="$" /><Stat label="Pending return" value={`$${money(pendingYield)}`} note="Daily close at 5:30 AM IST" icon="◷" /><Stat label="Income entries" value={String(incomeEvents.length)} note="Recent indexed entries" icon="▤" /><Stat label="Network" value="BSC" note="On-chain records" icon="◇" /></section><section className="content-card"><PageHeading title="Income report" subtitle={activityStatus} /><div className="income-filters" role="group" aria-label="Filter income by category">{incomeCategories.map(category => <button key={category.key} type="button" className={`income-filter ${selectedCategory === category.key ? "active" : ""}`} aria-pressed={selectedCategory === category.key} onClick={() => setSelectedCategory(category.key)}>{category.label}</button>)}</div>{visibleEvents.length ? <ActivityList activity={visibleEvents} /> : <p className="empty-state">No {selectedCategory === "all" ? "income" : incomeCategories.find(category => category.key === selectedCategory)?.label.toLowerCase()} entries yet.</p>}</section></div>;
 }
 
 function RankPage({ rank, volume, directs }: any) {
   const next = ranks[rank] ?? ranks[ranks.length - 1];
   const percent = Math.min(100, Number(formatUnits(volume ?? 0n, 18)) / next * 100);
-  return <div className="page-stack"><section className="rank-hero"><div><small>CURRENT LEADERSHIP RANK</small><h2>{rank ? `Bit-${rank}` : "Unranked"}</h2><p>Leadership status from your on-chain team volume and qualification.</p></div><span className="rank-emblem">◇</span></section><div className="stat-grid"><Stat label="Team volume" value={`$${money(volume)}`} note="On-chain qualifying volume" icon="$" /><Stat label="Direct members" value={String(Number(directs ?? 0))} note="Package-active directs" icon="♧" /><Stat label="Next rank" value={rank >= 10 ? "Maximum" : `Bit-${rank + 1}`} note={rank >= 10 ? "Top rank reached" : `$${next.toLocaleString()} team volume`} icon="◇" /><Stat label="Volume progress" value={`${percent.toFixed(1)}%`} note="Towards next volume threshold" icon="↗" /></div><section className="content-card"><PageHeading title="Leadership ladder" subtitle="Team volume thresholds from the Bit Five plan" /><div className="rank-list">{ranks.map((threshold, i) => <div className={`rank-row ${rank >= i + 1 ? "rank-done" : ""}`} key={threshold}><span>{rank >= i + 1 ? "✓" : `0${i + 1}`}</span><b>Bit-{i + 1}</b><small>${threshold.toLocaleString()} team volume</small><strong>{rank >= i + 1 ? "Achieved" : "In progress"}</strong></div>)}</div></section></div>;
+  return <div className="page-stack rank-page"><section className="rank-hero"><div><small>CURRENT LEADERSHIP RANK</small><h2>{rank ? `Bit-${rank}` : "Unranked"}</h2><p>Leadership status from your on-chain team volume and qualification.</p></div><span className="rank-emblem">◇</span></section><div className="stat-grid"><Stat label="Team volume" value={`$${money(volume)}`} note="On-chain qualifying volume" icon="$" /><Stat label="Direct members" value={String(Number(directs ?? 0))} note="Package-active directs" icon="♧" /><Stat label="Next rank" value={rank >= 10 ? "Maximum" : `Bit-${rank + 1}`} note={rank >= 10 ? "Top rank reached" : `$${next.toLocaleString()} team volume`} icon="◇" /><Stat label="Volume progress" value={`${percent.toFixed(1)}%`} note="Towards next volume threshold" icon="↗" /></div><section className="content-card"><PageHeading title="Leadership ladder" subtitle="Team volume thresholds from the Bit Five plan" /><div className="rank-list">{ranks.map((threshold, i) => <div className={`rank-row ${rank >= i + 1 ? "rank-done" : ""}`} key={threshold}><span>{rank >= i + 1 ? "✓" : `0${i + 1}`}</span><b>Bit-{i + 1}</b><small>${threshold.toLocaleString()} team volume</small><strong>{rank >= i + 1 ? "Achieved" : "In progress"}</strong></div>)}</div></section></div>;
 }
 
 function TeamPage({ title, subtitle, members, rootAddress, genealogy = false }: { title: string; subtitle: string; members: TeamMember[]; rootAddress?: string; genealogy?: boolean }) {
@@ -277,7 +301,7 @@ function TransactionsPage({ activity, activityStatus }: { activity: Activity[]; 
 }
 
 function WalletPage({ recipient, setRecipient, amount, setAmount, isPending, send, status, hash }: any) {
-  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="Wallet actions" subtitle="Send internal earnings to another Bit Five member" /><label className="field-label">Recipient wallet<input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x…" /></label><label className="field-label">Amount in USDT<input type="number" value={amount} onChange={e => setAmount(e.target.value)} /></label><p className="helper-copy">P2P transfers apply the plan's 1% fee.</p><button className="btn primary action-wide" disabled={isPending || !isAddress(recipient) || !Number(amount)} onClick={send}>{isPending ? "Confirm in wallet…" : "Send balance"}</button>{status && <TxStatus status={status} hash={hash} />}</section></div>;
+  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="P2P Wallet Transfer" subtitle="Send internal earnings to another Bit Five member" /><label className="field-label">Recipient wallet<input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x…" /></label><label className="field-label">Amount in USDT<input type="number" value={amount} onChange={e => setAmount(e.target.value)} /></label><p className="helper-copy">P2P transfers apply the plan's 1% fee.</p><button className="btn primary action-wide" disabled={isPending || !isAddress(recipient) || !Number(amount)} onClick={send}>{isPending ? "Confirm in wallet…" : "Send balance"}</button>{status && <TxStatus status={status} hash={hash} />}</section></div>;
 }
 
 function ActivityList({ activity }: { activity: Activity[] }) {
