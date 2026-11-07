@@ -7,7 +7,7 @@ import { apiBaseUrl, b5Address, b5TreasuryAddress, contractsConfigured, explorer
 
 const packages = [{ name: "Basic", price: 50, rate: 1.5, days: 134 }, { name: "Standard", price: 100, rate: 1.6, days: 125 }, { name: "Business", price: 500, rate: 1.7, days: 188 }, { name: "VIP", price: 1000, rate: 1.8, days: 112 }, { name: "Luxury", price: 2500, rate: 2, days: 100 }] as const;
 const ranks = [5_000, 15_000, 35_000, 80_000, 200_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000];
-type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "income" | "rank" | "transactions" | "wallet";
+type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "income" | "rank" | "transactions";
 type Activity = { event_name: string; amount: string | null; metadata?: { packageId?: number | string; [key: string]: unknown }; transaction_hash: string; block_timestamp: string };
 type IncomeCategory = "staking" | "direct" | "level" | "booster" | "rank";
 type TeamMember = { member_code: string; wallet_address: string; sponsor_address: string | null; package_id: number | null; activated_at: string | null; depth: number };
@@ -43,7 +43,7 @@ const eventTitle = (item: Activity) => {
     } as Record<string, string>)[incomeType] ?? "Team income credited";
   }
   const name = item.event_name;
-  return ({ Registered: "Joined the network", Activated: "Package purchased", YieldClaimed: "Staking ROI credited", EarningsWithdrawn: "USDT withdrawal", PrincipalWithdrawn: "Principal withdrawal", B5Claimed: "B5 claimed", P2PTransferred: "P2P transfer", UserBlockChanged: "Account status changed" }[name] ?? name.replace(/([A-Z])/g, " $1").trim());
+  return ({ Registered: "Joined the network", Activated: "Package purchased", YieldClaimed: "Staking ROI credited", EarningsWithdrawn: "USDT withdrawal", PrincipalWithdrawn: "Principal withdrawal", B5Claimed: "B5 claimed", UserBlockChanged: "Account status changed" }[name] ?? name.replace(/([A-Z])/g, " $1").trim());
 };
 
 export default function App() {
@@ -56,8 +56,6 @@ export default function App() {
   const [sponsor, setSponsor] = useState(() => new URLSearchParams(window.location.search).get("ref") ?? new URLSearchParams(window.location.search).get("sponsor") ?? "");
   const [copied, setCopied] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("10");
-  const [recipient, setRecipient] = useState("");
-  const [transferAmount, setTransferAmount] = useState("10");
   const [blockTarget, setBlockTarget] = useState("");
   const [activity, setActivity] = useState<Activity[]>([]);
   const [activityStatus, setActivityStatus] = useState("Loading recent activity…");
@@ -70,8 +68,6 @@ export default function App() {
   const { switchChain } = useSwitchChain();
   const { data: hash, writeContract, isPending, error } = useWriteContract();
   const receipt = useWaitForTransactionReceipt({ hash });
-  const p2pTx = useWriteContract();
-  const p2pReceipt = useWaitForTransactionReceipt({ hash: p2pTx.data });
   const packageTx = useWriteContract();
   const packageReceipt = useWaitForTransactionReceipt({ hash: packageTx.data });
   const enabled = contractsConfigured && !!address;
@@ -89,12 +85,10 @@ export default function App() {
   const volume = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "teamVolume", args: [user], query });
   const leadership = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "leadershipRank", args: [user], query });
   const allocation = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5Allocation", args: [user], query });
-  const p2pRecipient = isAddress(recipient) ? recipient as `0x${string}` : zeroAddress;
-  const p2pRecipientRegistered = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "isRegistered", args: [p2pRecipient], query: { enabled: enabled && page === "wallet" && isAddress(recipient), refetchInterval: 8000 } });
-  const p2pDailyCounter = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "dailyP2PTransfers", args: [user], query: { enabled: enabled && page === "wallet", refetchInterval: 5000 } });
   const unlockAt = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5UnlockAt", args: [user], query });
   const b5Open = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5WithdrawEnabled", query });
   const owner = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "owner", query });
+  const userBlocked = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "blocked", args: [user], query: { ...query, refetchInterval: 5000 } });
   const canWithdrawPrincipal = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "canWithdrawPrincipal", args: [user], query });
   const usdtBalance = useReadContract({ abi: erc20Abi, address: usdtAddress, functionName: "balanceOf", args: [user], query: { enabled } });
   const allowance = useReadContract({ abi: erc20Abi, address: usdtAddress, functionName: "allowance", args: [user, protocolAddress], query: { enabled } });
@@ -105,10 +99,6 @@ export default function App() {
     if (packageAction === "approval") void allowance.refetch();
     if (packageAction === "purchase") void positionCount.refetch();
   }, [packageAction, packageReceipt.data?.status, packageReceipt.data?.transactionHash]);
-
-  useEffect(() => {
-    if (p2pReceipt.data?.status === "success") void earnings.refetch();
-  }, [p2pReceipt.data?.status, p2pReceipt.data?.transactionHash]);
 
   const registered = registration.data === true;
   const active = Number(positionCount.data ?? 0n) > 0 || (!!position.data && position.data[1] > 0n);
@@ -136,9 +126,6 @@ export default function App() {
   }, [withdrawAmount]);
   const b5FeeForWithdrawal = withdrawBase * 500n / 10_000n;
   const enoughB5FeeAllowance = (b5TreasuryAllowance.data ?? 0n) >= b5FeeForWithdrawal;
-  const p2pToday = BigInt(Math.floor(Date.now() / 86_400_000));
-  const p2pDayAndCount = p2pDailyCounter.data as readonly [bigint, number] | undefined;
-  const p2pCountToday = p2pDayAndCount && p2pDayAndCount[0] === p2pToday ? Number(p2pDayAndCount[1]) : 0;
   const blockTargetValid = isAddress(blockTarget);
   const targetBlocked = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "blocked", args: [blockTargetValid ? blockTarget : zeroAddress], query: { enabled: isOwner && blockTargetValid, refetchInterval: 12000 } });
   const status = (error as any)?.shortMessage ?? error?.message ?? (receipt.isSuccess ? "Transaction confirmed." : hash ? "Transaction submitted…" : "");
@@ -172,7 +159,7 @@ export default function App() {
       .then(d => { setTeam(d.members ?? []); setTeamStatus(`${d.directCount ?? 0} direct members · ${d.teamCount ?? 0} total team members`); })
       .catch(() => !controller.signal.aborted && setTeamStatus("Team data is syncing from the chain."));
     return () => controller.abort();
-  }, [address, receipt.isSuccess, packageReceipt.data?.transactionHash, p2pReceipt.data?.transactionHash]);
+  }, [address, receipt.isSuccess, packageReceipt.data?.transactionHash]);
 
   useEffect(() => {
     if (isConnected && registration.data === false) setPage("register");
@@ -187,14 +174,11 @@ export default function App() {
   const claim = (name: "claimYield" | "withdrawPrincipal" | "claimB5") => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: name });
   const admin = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setB5WithdrawEnabled", args: [!b5Open.data] });
   const toggleBlocked = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setBlocked", args: [blockTarget as `0x${string}`, !targetBlocked.data] });
-  const startP2pTransfer = () => {
-    p2pTx.reset();
-    p2pTx.writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "p2pTransfer", args: [recipient as `0x${string}`, parseUnits(transferAmount || "0", 18)] });
-  };
 
   if (!isConnected) return <Login connect={connect} />;
+  if (userBlocked.data === true && owner.data !== undefined && !isOwner) return <BlockedAccount address={address} disconnect={() => disconnect()} />;
 
-  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Top-up / Packages", withdraw: "Withdrawal", income: "Income Report", rank: "My Rank", transactions: "Transaction", wallet: "P2P Wallet Transfer" };
+  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Top-up / Packages", withdraw: "Withdrawal", income: "Income Report", rank: "My Rank", transactions: "Transaction" };
   const navItems: { key: Page; icon: string; label: string }[] = [
     { key: "dashboard", icon: "▦", label: "Dashboard" },
     { key: "topup", icon: "＋", label: "Top-up" },
@@ -202,7 +186,6 @@ export default function App() {
     { key: "income", icon: "▤", label: "Income Report" },
     { key: "rank", icon: "◇", label: "My Rank" },
     { key: "transactions", icon: "◷", label: "Transaction" },
-    { key: "wallet", icon: "⇄", label: "P2P Wallet Transfer" },
   ];
 
   return <div className="member-layout">
@@ -234,7 +217,6 @@ export default function App() {
         {registered && page === "income" && <IncomePage earnings={earnings.data} pendingYield={pendingYield.data} activity={activity} activityStatus={activityStatus} />}
         {registered && page === "rank" && <RankPage rank={Number(leadership.data ?? 0)} volume={volume.data} directs={directs.data} />}
         {registered && page === "transactions" && <TransactionsPage activity={activity} activityStatus={activityStatus} />}
-        {registered && page === "wallet" && <WalletPage address={address} recipient={recipient} setRecipient={setRecipient} recipientRegistered={p2pRecipientRegistered.data} recipientChecking={p2pRecipientRegistered.isLoading} dailyCount={p2pCountToday} amount={transferAmount} setAmount={setTransferAmount} balance={earnings.data} isPending={p2pTx.isPending} receiptPending={p2pReceipt.isLoading} confirmed={p2pReceipt.data?.status === "success"} failed={p2pReceipt.isError} error={p2pTx.error ? (p2pTx.error as any)?.shortMessage ?? p2pTx.error.message : (p2pReceipt.error as any)?.shortMessage ?? p2pReceipt.error?.message} send={startP2pTransfer} status={p2pTx.isPending ? "Confirm the transfer in your wallet…" : p2pTx.data ? "Transaction submitted. Waiting for BNB Smart Chain confirmation…" : ""} hash={p2pTx.data} clearResult={() => p2pTx.reset()} />}
       </main>
     </div>
   </div>;
@@ -242,6 +224,10 @@ export default function App() {
 
 function Login({ connect }: { connect: () => void }) {
   return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark">B<sup>5</sup></div><small className="auth-eyebrow">MEMBER ACCESS</small><h1>Connect your wallet</h1><p>Sign in to your Bit Five member panel using your BNB Smart Chain wallet.</p><button className="btn primary auth-connect" onClick={connect}>◈ &nbsp; Connect Wallet</button><div className="auth-points"><span>Wallet-signed transactions</span><span>Referral registration on-chain</span><span>BNB Smart Chain · Chain 56</span></div></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
+}
+
+function BlockedAccount({ address, disconnect }: { address?: `0x${string}`; disconnect: () => void }) {
+  return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark">!</div><small className="auth-eyebrow">ACCOUNT RESTRICTED</small><h1>This account is blocked</h1><p>This wallet is blocked by the Bit Five protocol. Member pages and actions are unavailable for this account.</p><div className="auth-points"><span>Connected wallet: {short(address)}</span><span>Contact the protocol administrator if you believe this is an error.</span><span>On-chain data remains publicly viewable.</span></div><a className="btn outline auth-connect" href={`${explorerUrl}/address/${address}`} target="_blank" rel="noreferrer">View wallet on BscScan ↗</a><button className="btn primary auth-connect" onClick={disconnect}>Disconnect wallet</button></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
 }
 
 function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registrationAllowed, isPending, status, hash, write }: { address?: `0x${string}`; sponsor: string; rootEstablished: boolean; rootLoading: boolean; registrationAllowed: boolean; isPending: boolean; status: string; hash?: `0x${string}`; write: () => void }) {
@@ -323,15 +309,6 @@ function TeamNodeCard({ address, member, isRoot = false }: { address: string; me
 
 function TransactionsPage({ activity, activityStatus }: { activity: Activity[]; activityStatus: string }) {
   return <div className="page-stack"><section className="content-card"><PageHeading title="Transactions" subtitle={activityStatus} /><ActivityList activity={activity} /></section></div>;
-}
-
-function WalletPage({ address, recipient, setRecipient, recipientRegistered, recipientChecking, dailyCount, amount, setAmount, balance, isPending, receiptPending, confirmed, failed, error, send, status, hash, clearResult }: any) {
-  const locked = isPending || receiptPending;
-  const clearThen = (setter: (value: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!locked) clearResult();
-    setter(event.target.value);
-  };
-  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="P2P Wallet Transfer" subtitle="Send internal earnings to another registered Bit Five member" /><div className="withdraw-balance"><small>AVAILABLE INTERNAL BALANCE</small><b>${money(balance)}</b><span>Recipient receives 99% after the 1% transfer fee.</span></div><label className="field-label">Recipient wallet<input value={recipient} onChange={clearThen(setRecipient)} placeholder="0x…" disabled={locked} /></label>{isAddress(recipient) && <p className="helper-copy">{recipientChecking ? "Checking recipient registration on V7…" : recipientRegistered ? "Registered Bit Five member ✓" : "This wallet is not registered on V7."}</p>}<label className="field-label">Amount in USDT<input type="number" min="0.01" value={amount} onChange={clearThen(setAmount)} disabled={locked} /></label><p className="helper-copy">P2P transfers apply the plan's 1% fee. Daily outgoing transfers: {dailyCount}/2 · resets at 05:30 IST.</p>{dailyCount >= 2 && <Notice tone="amber" text="You have reached today's two-transfer limit. It resets at 05:30 IST." />}<button className="btn primary action-wide" disabled={locked || confirmed || !isAddress(recipient) || recipientRegistered !== true || recipientChecking || recipient.toLowerCase() === address?.toLowerCase() || dailyCount >= 2 || !Number(amount) || Number(amount) > Number(formatUnits(balance ?? 0n, 18))} onClick={send}>{isPending ? "Confirm in wallet…" : receiptPending ? "Waiting for on-chain confirmation…" : confirmed ? "Transfer confirmed ✓" : "Send balance"}</button>{status && !confirmed && !failed && <TxStatus status={status} hash={hash} />}{failed && <Notice tone="amber" text={error || "The transfer failed on-chain. Check the transaction on BscScan before retrying."} />}{confirmed && <div className="notice notice-green"><b>P2P transfer confirmed on BNB Smart Chain.</b><br />The recipient received 99% of the amount after the 1% fee. Your internal balance is refreshing. <TxStatus status="" hash={hash} /></div>}</section></div>;
 }
 
 function ActivityList({ activity }: { activity: Activity[] }) {

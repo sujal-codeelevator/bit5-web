@@ -8,7 +8,6 @@ export const protocolAbi = [
   { type: "function", name: "rootUser", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "sponsorOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "address" }] },
   { type: "function", name: "isRegistered", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
-  { type: "function", name: "dailyP2PTransfers", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ name: "dayIndex", type: "uint40" }, { name: "count", type: "uint8" }] },
   { type: "function", name: "register", stateMutability: "nonpayable", inputs: [{ name: "proposedSponsor", type: "address" }], outputs: [] },
   { type: "function", name: "positionCount", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "packages", stateMutability: "view", inputs: [{ type: "uint256" }], outputs: [{ name: "price", type: "uint256" }, { name: "dailyRateBps", type: "uint16" }, { name: "durationDays", type: "uint16" }] },
@@ -30,7 +29,6 @@ export const protocolAbi = [
   { type: "function", name: "claimYield", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "withdrawEarnings", stateMutability: "nonpayable", inputs: [{ name: "amount", type: "uint256" }], outputs: [] },
   { type: "function", name: "withdrawPrincipal", stateMutability: "nonpayable", inputs: [], outputs: [] },
-  { type: "function", name: "p2pTransfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
   { type: "function", name: "claimB5", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "setB5WithdrawEnabled", stateMutability: "nonpayable", inputs: [{ name: "enabled", type: "bool" }], outputs: [] }
 ] as const;
