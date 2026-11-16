@@ -36,7 +36,7 @@
 .genealogy-children>.genealogy-node:before{position:absolute;top:-17px;left:50%;height:17px;width:1px;background:#2c6285;content:""}
 @media(max-width:850px){.level-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.genealogy-branches{gap:14px}.genealogy-children{gap:12px}.genealogy-card{width:155px}}
 
-.topup-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 18px}
+.topup-steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 18px}
 .topup-step{min-width:0;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #203953;border-radius:9px;background:#0a1929;color:#7790a9}
 .topup-step>span{flex:0 0 25px;width:25px;height:25px;display:grid;place-items:center;border:1px solid #2b4660;border-radius:50%;font-size:10px;font-weight:800}
 .topup-step>b{font-size:10px;font-weight:600;line-height:1.3}

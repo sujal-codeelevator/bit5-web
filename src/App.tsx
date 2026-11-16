@@ -54,6 +54,8 @@ export default function App() {
   const [selected, setSelected] = useState(1);
   const [packageAction, setPackageAction] = useState<"approval" | "purchase" | null>(null);
   const [purchasePackageId, setPurchasePackageId] = useState<number | null>(null);
+  const [registrationTxHash, setRegistrationTxHash] = useState<`0x${string}`>();
+  const [registrationConfirmed, setRegistrationConfirmed] = useState(false);
   const [sponsor, setSponsor] = useState(() => new URLSearchParams(window.location.search).get("ref") ?? new URLSearchParams(window.location.search).get("sponsor") ?? "");
   const [copied, setCopied] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("10");
@@ -67,7 +69,7 @@ export default function App() {
   const { disconnect } = useDisconnect();
   const { open } = useAppKit();
   const { switchChain } = useSwitchChain();
-  const { data: hash, writeContract, isPending, error } = useWriteContract();
+  const { data: hash, writeContract, writeContractAsync, isPending, error } = useWriteContract();
   const receipt = useWaitForTransactionReceipt({ hash });
   const packageTx = useWriteContract();
   const packageReceipt = useWaitForTransactionReceipt({ hash: packageTx.data });
@@ -108,7 +110,8 @@ export default function App() {
     if (packageAction === "purchase") void positionCount.refetch();
   }, [packageAction, packageReceipt.data?.status, packageReceipt.data?.transactionHash]);
 
-  const registered = registration.data === true;
+  const registrationMined = !!registrationTxHash && hash?.toLowerCase() === registrationTxHash.toLowerCase() && receipt.isSuccess && receipt.data?.status === "success";
+  const registered = registration.data === true || registrationConfirmed || registrationMined;
   const active = Number(positionCount.data ?? 0n) > 0 || (!!position.data && position.data[1] > 0n);
   const chosen = packages[selected];
   const hasAllowance = (allowance.data ?? 0n) >= parseUnits(String(chosen.price), 18);
@@ -122,10 +125,17 @@ export default function App() {
   // for the regular dashboard polling interval before leaving the registration page.
   useEffect(() => {
     if (!address || !receipt.isSuccess || receipt.data?.status !== "success") return;
+    if (!registrationTxHash || hash?.toLowerCase() !== registrationTxHash.toLowerCase()) return;
+    setRegistrationConfirmed(true);
+    setPage("dashboard");
+    setMobileOpen(false);
     void registration.refetch();
     void accountSponsor.refetch();
     void rootUser.refetch();
-  }, [address, receipt.isSuccess, receipt.data?.status, receipt.data?.transactionHash]);
+  }, [address, hash, registrationTxHash, receipt.isSuccess, receipt.data?.status, receipt.data?.transactionHash]);
+  useEffect(() => {
+    if (registration.data === true && registrationConfirmed) setRegistrationConfirmed(false);
+  }, [registration.data, registrationConfirmed]);
   useEffect(() => {
     if (!receipt.isSuccess || receipt.data?.status !== "success") return;
     void pendingYield.refetch();
@@ -180,9 +190,9 @@ export default function App() {
   }, [address, receipt.isSuccess, packageReceipt.data?.transactionHash]);
 
   useEffect(() => {
-    if (isConnected && registration.data === false) setPage("register");
+    if (isConnected && registration.data === false && !registered) setPage("register");
     if (isConnected && registered && page === "register") setPage("dashboard");
-  }, [isConnected, registration.data, registered, page]);
+  }, [isConnected, registration.data, registrationConfirmed, registered, page]);
 
   const connect = () => open({ view: "Connect", namespace: "eip155" });
   const go = (next: Page) => {
@@ -226,7 +236,7 @@ export default function App() {
       {chainId !== targetChainId && <div className="chain-warning">Wrong network. <button onClick={() => switchChain({ chainId: targetChainId })}>Switch to BNB Smart Chain</button></div>}
       <main className="member-content">
         {!contractsConfigured && <Notice tone="amber" text="Mainnet contract settings are missing from this build." />}
-        {page === "register" && <RegisterPage address={address} sponsor={sponsor} rootEstablished={rootEstablished} rootLoading={rootUser.isLoading || rootUser.data === undefined} registrationAllowed={registrationAllowed} isPending={isPending} status={status} hash={hash} write={() => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "register", args: [sponsorAddress] })} />}
+        {page === "register" && <RegisterPage address={address} sponsor={sponsor} rootEstablished={rootEstablished} rootLoading={rootUser.isLoading || rootUser.data === undefined} registrationAllowed={registrationAllowed} isPending={isPending} isWaitingForConfirmation={!!registrationTxHash && hash?.toLowerCase() === registrationTxHash.toLowerCase() && !receipt.isSuccess} status={status} hash={hash} write={() => { setRegistrationConfirmed(false); setRegistrationTxHash(undefined); void writeContractAsync({ abi: protocolAbi, address: protocolAddress, functionName: "register", args: [sponsorAddress] }).then(setRegistrationTxHash).catch(() => undefined); }} />}
         {registered && page === "dashboard" && <Dashboard address={address} active={active} count={Number(positionCount.data ?? 0n)} earnings={earnings.data} pendingYield={pendingYield.data} allocation={allocation.data} directs={directs.data} volume={volume.data} businessVolume={businessVolume.data} strongBusinessVolume={strongBusinessVolume.data} weakBusinessVolume={weakBusinessVolume} totalIncome={totalIncome} leadership={leadership.data} b5Open={!!b5Open.data} unlockAt={unlockAt.data} activity={activity} go={go} copied={copied} onCopy={() => { void navigator.clipboard.writeText(`${window.location.origin}/?ref=${address}`).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); }); }} claim={() => claim("claimYield")} isPending={isPending} receiptPending={receipt.isLoading} status={status} hash={hash} isOwner={isOwner} admin={admin} blockTarget={blockTarget} setBlockTarget={setBlockTarget} blockTargetValid={blockTargetValid} blockTargetAddress={blockTargetAddress} blockTargetMember={blockTargetMember} blockTargetNotFound={!!blockTarget.trim() && !isAddress(blockTarget) && !blockTargetMember && blockTargetLookupReady} targetBlocked={!!targetBlocked.data} onBlock={toggleBlocked} />}
         {registered && page === "team" && <TeamPage title="Team List" subtitle={teamStatus} members={team.filter(m => Number(m.depth) === 0)} rootAddress={address} />}
         {registered && page === "genealogy" && <TeamPage title="Your Genealogy" subtitle={teamStatus} members={team} rootAddress={address} genealogy />}
@@ -248,9 +258,9 @@ function BlockedAccount({ address, disconnect }: { address?: `0x${string}`; disc
   return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark">!</div><small className="auth-eyebrow">ACCOUNT RESTRICTED</small><h1>This account is blocked</h1><p>This wallet is blocked by the Bit Five protocol. Member pages and actions are unavailable for this account.</p><div className="auth-points"><span>Connected wallet: {short(address)}</span><span>Contact the protocol administrator if you believe this is an error.</span><span>On-chain data remains publicly viewable.</span></div><a className="btn outline auth-connect" href={`${explorerUrl}/address/${address}`} target="_blank" rel="noreferrer">View wallet on BscScan ↗</a><button className="btn primary auth-connect" onClick={disconnect}>Disconnect wallet</button></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
 }
 
-function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registrationAllowed, isPending, status, hash, write }: { address?: `0x${string}`; sponsor: string; rootEstablished: boolean; rootLoading: boolean; registrationAllowed: boolean; isPending: boolean; status: string; hash?: `0x${string}`; write: () => void }) {
+function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registrationAllowed, isPending, isWaitingForConfirmation, status, hash, write }: { address?: `0x${string}`; sponsor: string; rootEstablished: boolean; rootLoading: boolean; registrationAllowed: boolean; isPending: boolean; isWaitingForConfirmation: boolean; status: string; hash?: `0x${string}`; write: () => void }) {
   const sponsorValid = isAddress(sponsor) && sponsor.toLowerCase() !== zeroAddress;
-  return <section className="content-card narrow-card"><PageHeading title="Create your account" subtitle="Register on-chain under your sponsor's wallet. No email or password required." /><div className="join-steps"><span className="step-current">01 <b>Connect wallet</b></span><i>→</i><span>02 <b>Register</b></span><i>→</i><span>03 <b>Choose package</b></span></div><div className="wallet-confirm"><span className="status-dot" /> Wallet connected <b>{short(address)}</b></div>{rootEstablished ? <label className="field-label">Sponsor wallet address <small>Open your sponsor's referral link. Registration without a registered sponsor is blocked by the contract.</small><input readOnly value={sponsor} placeholder="Open a referral link to continue" /></label> : <div className="notice notice-green">{rootLoading ? "Checking whether the network root is set…" : "First account: this wallet will become the network root. No sponsor is required."}</div>}{rootEstablished && !sponsorValid && !rootLoading && <Notice tone="amber" text="A valid sponsor referral link is required before registration." />}<p className="helper-copy">Your sponsor is recorded permanently in the BNB Smart Chain transaction.</p><button className="btn primary action-wide" disabled={isPending || !registrationAllowed || rootLoading} onClick={write}>{isPending ? "Confirm in wallet…" : "Create account on-chain →"}</button>{status && <TxStatus status={status} hash={hash} />}</section>;
+  return <section className="content-card narrow-card"><PageHeading title="Create your account" subtitle="Register on-chain under your sponsor's wallet. No email or password required." /><div className="join-steps"><span className="step-current">01 <b>Connect wallet</b></span><i>→</i><span>02 <b>Register</b></span><i>→</i><span>03 <b>Choose package</b></span></div><div className="wallet-confirm"><span className="status-dot" /> Wallet connected <b>{short(address)}</b></div>{rootEstablished ? <label className="field-label">Sponsor wallet address <small>Open your sponsor's referral link. Registration without a registered sponsor is blocked by the contract.</small><input readOnly value={sponsor} placeholder="Open a referral link to continue" /></label> : <div className="notice notice-green">{rootLoading ? "Checking whether the network root is set…" : "First account: this wallet will become the network root. No sponsor is required."}</div>}{rootEstablished && !sponsorValid && !rootLoading && <Notice tone="amber" text="A valid sponsor referral link is required before registration." />}<p className="helper-copy">Your sponsor is recorded permanently in the BNB Smart Chain transaction.</p><button className="btn primary action-wide" disabled={isPending || isWaitingForConfirmation || !registrationAllowed || rootLoading} onClick={write}>{isPending ? "Confirm in wallet…" : isWaitingForConfirmation ? "Waiting for BSC confirmation…" : "Create account on-chain →"}</button>{status && <TxStatus status={isWaitingForConfirmation ? "Transaction submitted · waiting for BSC confirmation…" : status} hash={hash} />}</section>;
 }
 
 function Dashboard({ address, active, count, earnings, pendingYield, allocation, directs, volume, businessVolume, strongBusinessVolume, weakBusinessVolume, totalIncome, leadership, b5Open, unlockAt, activity, go, copied, onCopy, claim, isPending, receiptPending, status, hash, isOwner, admin, blockTarget, setBlockTarget, blockTargetValid, blockTargetAddress, blockTargetMember, blockTargetNotFound, targetBlocked, onBlock }: any) {
@@ -271,21 +281,20 @@ function TopupPage({ packages: list, selected, setSelected, chosen, count, balan
   const purchaseReverted = action === "purchase" && receiptStatus === "reverted";
   const waiting = isPending || receiptPending;
   const purchaseSubmitted = action === "purchase" && !!hash;
+  const approvalReady = hasAllowance || approvalConfirmed;
   const purchasedPackage = purchasePackageId == null ? chosen : list[purchasePackageId];
   const steps = [
-    { label: "Choose package", done: true, current: false },
-    { label: "Approve USDT", done: hasAllowance || approvalConfirmed, current: !hasAllowance && !approvalConfirmed },
-    { label: "Confirm purchase", done: purchaseConfirmed || purchaseSubmitted, current: hasAllowance && !purchaseConfirmed && !purchaseSubmitted },
-    { label: "On-chain confirmation", done: purchaseConfirmed, current: purchaseSubmitted && receiptPending },
+    { label: "Step 1 · Approve USDT", done: approvalReady, current: !approvalReady },
+    { label: "Step 2 · Confirm & Activate", done: purchaseConfirmed, current: approvalReady && !purchaseConfirmed },
   ];
   return <div className="page-stack"><section className="content-card topup-card">
-    <PageHeading title={count ? "Purchase another package" : "Choose your package"} subtitle="Follow each step. Your package is active only after the BNB Smart Chain transaction is confirmed." />
+    <PageHeading title={count ? "Purchase another package" : "Choose your package"} subtitle="Select a package, then complete two wallet steps: approve USDT, and confirm & activate your package." />
     <div className="topup-steps">{steps.map((step, i) => <div className={`topup-step ${step.done ? "step-done" : ""} ${step.current ? "step-current" : ""}`} key={step.label}><span>{step.done ? "✓" : `0${i + 1}`}</span><b>{step.label}</b></div>)}</div>
     <div className="topup-summary"><span>Existing positions <b>{count}</b></span><span>Wallet USDT <b>${money(balance)}</b></span></div>
     {purchaseConfirmed ? <div className="purchase-success"><div className="purchase-success-mark">✓</div><small>ON-CHAIN CONFIRMATION RECEIVED</small><h2>Package purchase complete</h2><p><b>{purchasedPackage.name}</b> package · <b>${purchasedPackage.price.toLocaleString()} USDT</b></p><p className="purchase-success-copy">Your new package position is active. You can see the confirmed transaction on BscScan.</p>{hash && <a className="btn outline" href={txUrl(hash)} target="_blank" rel="noreferrer">View confirmed transaction ↗</a>}<div className="purchase-success-actions"><button className="btn primary" onClick={goDashboard}>Go to Dashboard</button><button className="text-link" onClick={resetFlow}>Buy another package</button></div></div> : <>
       <div className="plan-grid">{list.map((p: any, i: number) => <button key={p.name} className={`plan-card ${selected === i ? "plan-selected" : ""}`} disabled={waiting} onClick={() => setSelected(i)}><span>{selected === i ? "SELECTED" : `PACKAGE 0${i + 1}`}</span><h3>{p.name}</h3><b>${p.price.toLocaleString()}</b><small>USDT deposit</small><div className="plan-facts"><span>{p.rate}% daily rate</span><span>{p.days} days duration</span></div></button>)}</div>
-      <div className="purchase-footer"><div><small>Selected package</small><b>{chosen.name} · ${chosen.price.toLocaleString()}</b><span>{chosen.rate}% daily · {chosen.days} days</span></div>{!hasAllowance ? <button className="btn primary" disabled={waiting} onClick={approve}>{isPending ? "Confirm approval in wallet…" : "Approve USDT"}</button> : <button className="btn primary" disabled={waiting} onClick={purchase}>{isPending ? "Confirm purchase in wallet…" : `Confirm package · $${chosen.price.toLocaleString()}`}</button>}</div>
-      <p className="helper-copy">USDT approval is a separate wallet step and does not buy a package. After approval, confirm the package purchase and wait for its on-chain confirmation.</p>
+      <div className="purchase-footer"><div><small>Selected package</small><b>{chosen.name} · ${chosen.price.toLocaleString()}</b><span>{chosen.rate}% daily · {chosen.days} days</span></div>{!hasAllowance ? <button className="btn primary" disabled={waiting || approvalConfirmed} onClick={approve}>{isPending ? "Confirm Step 1 in wallet…" : approvalConfirmed ? "Checking USDT approval…" : "Step 1 · Approve USDT"}</button> : <button className="btn primary" disabled={waiting} onClick={purchase}>{isPending ? "Confirm Step 2 in wallet…" : `Step 2 · Confirm & Activate · $${chosen.price.toLocaleString()}`}</button>}</div>
+      <p className="helper-copy">Step 1 grants the contract permission to use your USDT; it does not purchase a package. Step 2 submits the package purchase and activates it after BNB Smart Chain confirms the transaction.</p>
       {approvalConfirmed && <div className="notice notice-green">USDT approval confirmed. No package has been bought yet—confirm the selected package to continue.</div>}
       {waiting && <div className="notice notice-amber">{isPending ? "Confirm this request in your wallet." : action === "approval" ? "USDT approval submitted. Waiting for network confirmation…" : "Package purchase submitted. Waiting for BNB Smart Chain confirmation…"}{hash && <a className="inline-explorer" href={txUrl(hash)} target="_blank" rel="noreferrer">View transaction ↗</a>}</div>}
       {purchaseReverted && <div className="notice notice-amber">The package transaction reverted. The package was not purchased. {hash && <a className="inline-explorer" href={txUrl(hash)} target="_blank" rel="noreferrer">View transaction ↗</a>}</div>}
