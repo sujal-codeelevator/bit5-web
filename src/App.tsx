@@ -368,7 +368,7 @@ function AdminPanel({ on, pending, toggle, blockTarget, setBlockTarget, blockTar
 }
 
 function Stat({ label, value, note, icon, dualValues }: { label: string; value?: string; note: string; icon: string; dualValues?: { label: string; value: string }[] }) { return <section className="stat-card"><span className="stat-icon">{icon}</span><small>{label}</small>{dualValues ? <div className="stat-dual-values">{dualValues.map(item => <span key={item.label}>{item.label}<b>{item.value}</b></span>)}</div> : <b>{value}</b>}<span className="stat-note">{note}</span></section>; }
-function Overview({ label, value, tone, note }: { label: string; value: string; tone?: string; note?: string }) { return <div className="overview-row"><span>{label}</span><div className="overview-value"><b className={tone ?? ""}>{value}</b>{note && <small>{note}</small>}</div></div>; }
+function Overview({ label, value, tone, note }: { label: string; value: string; tone?: string; note?: string }) { return <div className={`overview-row ${label === "B5 allocation" ? "allocation-overview-row" : ""}`}><span>{label}</span><div className="overview-value"><b className={tone ?? ""}>{value}</b>{note && <small>{note}</small>}</div></div>; }
 function PageHeading({ title, subtitle }: { title: string; subtitle: string }) { return <div className="page-heading"><h2>{title}</h2><p>{subtitle}</p></div>; }
 function QuickAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) { return <button className="quick-action" onClick={onClick}><span>{icon}</span><b>{label}</b><i>→</i></button>; }
 function Notice({ tone, text }: { tone: "amber" | "green"; text: string }) { return <p className={`notice notice-${tone}`}>{text}</p>; }

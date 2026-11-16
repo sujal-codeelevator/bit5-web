@@ -100,6 +100,14 @@
 .member-sidebar .sidebar-logout{display:flex;align-items:center;gap:10px;min-height:42px;margin-top:4px;padding:0 9px;border:1px solid #294561;border-radius:8px;background:#0c2136;color:#fff;font-size:14px;font-weight:800;text-align:left;cursor:pointer}
 .member-sidebar .sidebar-logout i{width:18px;color:#75ceff;font-size:18px;font-style:normal;text-align:center}
 .auth-actions{display:grid;gap:10px}
+.allocation-overview-row>span{font-size:12px!important;color:#dce6f4!important}
+.allocation-overview-row .overview-value>b{font-size:14px!important}
+.allocation-overview-row .overview-value>small{font-size:11px!important;color:#a3b8ca!important}
+.dashboard-client-stats .stat-card>small{font-size:12px!important;min-height:31px}
+.dashboard-client-stats .stat-card>b{font-size:24px!important}
+.dashboard-client-stats .stat-card .stat-note{font-size:11px!important}
+.dashboard-client-stats .stat-dual-values span{font-size:11px!important}
+.dashboard-client-stats .stat-dual-values b{font-size:14px!important}
 .income-filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 16px}
 .income-filter{min-height:36px;padding:8px 12px;border:1px solid #294561;border-radius:8px;background:#0a1929;color:#dce6f4;font-size:11px;font-weight:800;cursor:pointer}
 .income-filter.active{border-color:#35baf5;background:linear-gradient(135deg,#0d5482,#12375d);color:#fff;box-shadow:0 0 0 1px #35baf533}
