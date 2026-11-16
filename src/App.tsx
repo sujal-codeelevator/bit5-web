@@ -218,7 +218,7 @@ export default function App() {
         {teamOpen && <div className="member-subnav"><button className={page === "team" ? "selected" : ""} onClick={() => go("team")}>Team List</button><button className={page === "genealogy" ? "selected" : ""} onClick={() => go("genealogy")}>Genealogy Tree</button></div>}
         {navItems.slice(3).map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
       </>}
-      <div className="sidebar-bottom"><small>BSC MAINNET · CHAIN 56</small><a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer">View protocol on BscScan ↗</a></div>
+      <div className="sidebar-bottom"><small>BSC MAINNET · CHAIN 56</small><a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer">View protocol on BscScan ↗</a><button className="sidebar-logout" onClick={() => { setMobileOpen(false); disconnect(); }}><i>↪</i><span>Log out</span></button></div>
     </aside>
 
     <div className="member-workspace">
