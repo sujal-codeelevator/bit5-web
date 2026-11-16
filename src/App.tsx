@@ -203,7 +203,7 @@ export default function App() {
   const admin = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setB5WithdrawEnabled", args: [!b5Open.data] });
   const toggleBlocked = () => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "setBlocked", args: [blockTargetAddress as `0x${string}`, !targetBlocked.data] });
 
-  if (!isConnected) return <Login connect={connect} />;
+  if (!isConnected) return <Login connect={connect} logout={() => disconnect()} />;
   if (userBlocked.data === true && owner.data !== undefined && !isOwner) return <BlockedAccount address={address} disconnect={() => disconnect()} />;
 
   const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Top-up / Packages", withdraw: "Withdrawal", income: "Income Report", rank: "My Rank", transactions: "Transaction" };
@@ -250,8 +250,8 @@ export default function App() {
   </div>;
 }
 
-function Login({ connect }: { connect: () => void }) {
-  return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark auth-logo"><img src="/Logo.jpeg" alt="Bit Five logo" /></div><small className="auth-eyebrow">MEMBER ACCESS</small><h1>Connect your wallet</h1><p>Sign in to your Bit Five member panel using your BNB Smart Chain wallet.</p><button className="btn primary auth-connect" onClick={connect}>◈ &nbsp; Connect Wallet</button><div className="auth-points"><span>Wallet-signed transactions</span><span>Referral registration on-chain</span><span>BNB Smart Chain · Chain 56</span></div></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
+function Login({ connect, logout }: { connect: () => void; logout: () => void }) {
+  return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark auth-logo"><img src="/Logo.jpeg" alt="Bit Five logo" /></div><small className="auth-eyebrow">MEMBER ACCESS</small><h1>Connect your wallet</h1><p>Sign in to your Bit Five member panel using your BNB Smart Chain wallet.</p><div className="auth-actions"><button className="btn primary auth-connect" onClick={connect}>◈ &nbsp; Connect Wallet</button><button className="btn outline auth-connect" onClick={logout}>↪ &nbsp; Logout Wallet</button></div><div className="auth-points"><span>Wallet-signed transactions</span><span>Referral registration on-chain</span><span>BNB Smart Chain · Chain 56</span></div></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
 }
 
 function BlockedAccount({ address, disconnect }: { address?: `0x${string}`; disconnect: () => void }) {
