@@ -276,15 +276,18 @@ export default function App() {
     if (isConnected && registered && page === "register") setPage("dashboard");
   }, [isConnected, registration.data, registrationConfirmed, registered, page]);
 
-  const connect = () => open({ view: "Connect", namespace: "eip155" });
+  const connect = () => { setLogoutMessage(""); setLogoutPending(false); open({ view: "Connect", namespace: "eip155" }); };
   const logoutWallet = async () => {
     setMobileOpen(false);
     setLogoutPending(true);
     setLogoutMessage("");
-    try { await appKit.disconnect("eip155"); } catch { /* The session may already be disconnected. */ }
-    try { await disconnectAsync(); } catch { /* Clear the Wagmi connector even if AppKit has already cleared it. */ }
+    let disconnected = false;
+    try { await appKit.disconnect("eip155"); disconnected = true; } catch { /* The session may already be disconnected. */ }
+    try { await disconnectAsync(); disconnected = true; } catch { /* Clear the Wagmi connector even if AppKit has already cleared it. */ }
     setLogoutPending(false);
-    setLogoutMessage("You are logged out of the Bit Five portal. Connect your wallet to sign in again.");
+    setLogoutMessage(disconnected || !isConnected
+      ? "Wallet disconnected. You are logged out of the Bit Five portal."
+      : "Wallet could not be disconnected. Please disconnect Bit Five from your wallet app, then reconnect here.");
   };
   const go = (next: Page) => {
     setPage(!registered && next !== "register" ? "register" : next);
@@ -351,7 +354,8 @@ export default function App() {
 }
 
 function Login({ connect, logout, logoutPending, logoutMessage }: { connect: () => void; logout: () => void; logoutPending: boolean; logoutMessage: string }) {
-  return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark auth-logo"><img src="/Logo.jpeg" alt="Bit Five logo" /></div><small className="auth-eyebrow">MEMBER ACCESS</small><h1>Connect your wallet</h1><p>Sign in to your Bit Five member panel using your BNB Smart Chain wallet.</p><div className="auth-actions"><button className="btn primary auth-connect" onClick={connect}>◈ &nbsp; Connect Wallet</button><button className="btn outline auth-connect" onClick={logout} disabled={logoutPending}>{logoutPending ? "Logging out…" : "↪  Logout Wallet"}</button></div>{logoutMessage && <p className="logout-confirmation" role="status">{logoutMessage}</p>}<div className="auth-points"><span>Wallet-signed transactions</span><span>Referral registration on-chain</span><span>BNB Smart Chain · Chain 56</span></div></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
+  const logoutSuccess = logoutMessage.startsWith("Wallet disconnected.");
+  return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark auth-logo"><img src="/Logo.jpeg" alt="Bit Five logo" /></div><small className="auth-eyebrow">MEMBER ACCESS</small><h1>{logoutSuccess ? "Wallet disconnected" : "Connect your wallet"}</h1><p>{logoutSuccess ? "You are signed out of the Bit Five member portal." : "Sign in to your Bit Five member panel using your BNB Smart Chain wallet."}</p><div className="auth-actions"><button className="btn primary auth-connect" onClick={connect}>◈ &nbsp; Connect Wallet</button>{!logoutSuccess && <button className="btn outline auth-connect" onClick={logout} disabled={logoutPending}>{logoutPending ? "Disconnecting wallet…" : "↪  Logout Wallet"}</button>}</div>{logoutMessage && <p className={logoutSuccess ? "logout-confirmation" : "logout-failure"} role="status">{logoutSuccess && <b>✓ Logout complete</b>}<span>{logoutMessage}</span></p>}<div className="auth-points"><span>Wallet-signed transactions</span><span>Referral registration on-chain</span><span>BNB Smart Chain · Chain 56</span></div></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
 }
 
 function BlockedAccount({ address, disconnect }: { address?: `0x${string}`; disconnect: () => void }) {
