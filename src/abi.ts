@@ -31,10 +31,12 @@ export const protocolAbi = [
   { type: "function", name: "setBlocked", stateMutability: "nonpayable", inputs: [{ name: "user", type: "address" }, { name: "status", type: "bool" }], outputs: [] },
   { type: "function", name: "principalDeadline", stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "canWithdrawPrincipal", stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "canWithdrawPrincipalAt", stateMutability: "view", inputs: [{ name: "user", type: "address" }, { name: "index", type: "uint256" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "activate", stateMutability: "nonpayable", inputs: [{ name: "packageId", type: "uint8" }, { name: "proposedSponsor", type: "address" }], outputs: [] },
   { type: "function", name: "claimYield", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "withdrawEarnings", stateMutability: "nonpayable", inputs: [{ name: "amount", type: "uint256" }], outputs: [] },
   { type: "function", name: "withdrawPrincipal", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "withdrawPrincipalAt", stateMutability: "nonpayable", inputs: [{ name: "index", type: "uint256" }], outputs: [] },
   { type: "function", name: "claimB5", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "setB5WithdrawEnabled", stateMutability: "nonpayable", inputs: [{ name: "enabled", type: "bool" }], outputs: [] }
 ] as const;

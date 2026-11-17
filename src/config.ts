@@ -3,6 +3,8 @@ import { defineChain } from "@reown/appkit/networks";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 
 export const protocolAddress = (import.meta.env.VITE_PROTOCOL_ADDRESS ?? "0xF14f1f72A496ae8C0aAB486eb3FF7AbAbbF31Df1") as `0x${string}`;
+// Set to "individual" only when VITE_PROTOCOL_ADDRESS points to deployed V11.
+export const principalWithdrawalMode = import.meta.env.VITE_PRINCIPAL_WITHDRAWAL_MODE === "individual" ? "individual" : "aggregate";
 export const usdtAddress = (import.meta.env.VITE_USDT_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 export const b5Address = (import.meta.env.VITE_B5_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 export const b5TreasuryAddress = "0x95Cf6ed3660F2284a1236636502e57f5921d5154" as `0x${string}`;
