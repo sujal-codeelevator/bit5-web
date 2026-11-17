@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatUnits, isAddress, maxUint256, parseUnits } from "viem";
 import { useAppKit } from "@reown/appkit/react";
-import { useAccount, useDisconnect, useReadContract, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useDisconnect, useReadContract, useReadContracts, useSignMessage, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { erc20Abi, protocolAbi } from "./abi";
 import { apiBaseUrl, b5Address, b5TreasuryAddress, contractsConfigured, explorerUrl, protocolAddress, targetChainId, targetNetworkName, usdtAddress, zeroAddress } from "./config";
 
 const packages = [{ name: "Basic", price: 50, rate: 1.5, days: 134 }, { name: "Standard", price: 100, rate: 1.6, days: 125 }, { name: "Business", price: 500, rate: 1.7, days: 188 }, { name: "VIP", price: 1000, rate: 1.8, days: 112 }, { name: "Luxury", price: 2500, rate: 2, days: 100 }] as const;
 const ranks = [5_000, 15_000, 35_000, 80_000, 200_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000];
-type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "income" | "rank" | "transactions";
+type Page = "dashboard" | "register" | "team" | "genealogy" | "topup" | "withdraw" | "referral" | "income" | "rank" | "transactions" | "tokenHistory" | "reports" | "notifications" | "support" | "settings";
 type Activity = { event_name: string; amount: string | null; metadata?: { packageId?: number | string; [key: string]: unknown }; transaction_hash: string; block_timestamp: string };
 type IncomeCategory = "staking" | "direct" | "level" | "booster" | "rank";
 type TeamMember = { member_code: string; wallet_address: string; sponsor_address: string | null; package_id: number | null; activated_at: string | null; depth: number };
@@ -49,13 +49,22 @@ const eventTitle = (item: Activity) => {
 
 export default function App() {
   const [page, setPage] = useState<Page>(() => new URLSearchParams(window.location.search).has("ref") ? "register" : "dashboard");
-  const [teamOpen, setTeamOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selected, setSelected] = useState(1);
   const [packageAction, setPackageAction] = useState<"approval" | "purchase" | null>(null);
   const [purchasePackageId, setPurchasePackageId] = useState<number | null>(null);
   const [registrationTxHash, setRegistrationTxHash] = useState<`0x${string}`>();
   const [registrationConfirmed, setRegistrationConfirmed] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [contactConsent, setContactConsent] = useState(false);
+  const [contactSaveStatus, setContactSaveStatus] = useState<"idle" | "signing" | "saving" | "saved" | "error">("idle");
+  const [contactSaveMessage, setContactSaveMessage] = useState("");
+  const [memberCode, setMemberCode] = useState("");
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileNameLoadStatus, setProfileNameLoadStatus] = useState<"idle" | "signing" | "loading" | "error">("idle");
+  const [profileNameLoadMessage, setProfileNameLoadMessage] = useState("");
+  const contactSaveAttempt = useRef<string>("");
   const [sponsor, setSponsor] = useState(() => new URLSearchParams(window.location.search).get("ref") ?? new URLSearchParams(window.location.search).get("sponsor") ?? "");
   const [copied, setCopied] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("10");
@@ -70,6 +79,7 @@ export default function App() {
   const { open } = useAppKit();
   const { switchChain } = useSwitchChain();
   const { data: hash, writeContract, writeContractAsync, isPending, error } = useWriteContract();
+  const { signMessageAsync } = useSignMessage();
   const receipt = useWaitForTransactionReceipt({ hash });
   const packageTx = useWriteContract();
   const packageReceipt = useWaitForTransactionReceipt({ hash: packageTx.data });
@@ -81,6 +91,17 @@ export default function App() {
   const rootUser = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "rootUser", query: { ...query, refetchInterval: page === "register" ? 3000 : 12000 } });
   const accountSponsor = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "sponsorOf", args: [user], query });
   const positionCount = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "positionCount", args: [user], query });
+  const b5PositionReads = useReadContracts({ contracts: Array.from({ length: Math.min(Number(positionCount.data ?? 0n), 20) }, (_, index) => ({ abi: protocolAbi, address: protocolAddress, functionName: "positionAt" as const, args: [user, BigInt(index)] as const })), query: { enabled: enabled && (positionCount.data ?? 0n) > 0n, refetchInterval: 12000 } });
+  const b5Positions = useMemo(() => (b5PositionReads.data ?? []).flatMap((entry, index) => {
+    if (entry.status !== "success") return [];
+    const value = entry.result as any;
+    const field = (name: string, slot: number) => value?.[name] ?? value?.[slot];
+    const activatedAt = BigInt(field("activatedAt", 1) ?? 0n);
+    return [{ index, packageId: Number(field("packageId", 0) ?? 0), principal: BigInt(field("principal", 4) ?? 0n), principalWithdrawn: Boolean(field("principalWithdrawn", 6)), b5Claimed: Boolean(field("b5Claimed", 8)), unlockAt: activatedAt + 180n * 24n * 60n * 60n }];
+  }), [b5PositionReads.data]);
+  const b5Outstanding = b5Positions.reduce((sum, item) => sum + (!item.principalWithdrawn && !item.b5Claimed ? item.principal : 0n), 0n);
+  const b5Claimable = b5Positions.reduce((sum, item) => sum + (!item.principalWithdrawn && !item.b5Claimed && BigInt(Math.floor(Date.now() / 1000)) >= item.unlockAt ? item.principal : 0n), 0n);
+  const nextB5UnlockAt = b5Positions.filter(item => !item.principalWithdrawn && !item.b5Claimed).reduce<bigint | undefined>((earliest, item) => earliest === undefined || item.unlockAt < earliest ? item.unlockAt : earliest, undefined);
   const position = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "positions", args: [user], query });
   const earnings = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "earningsBalance", args: [user], query });
   const pendingYield = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "pendingYield", args: [user], query });
@@ -94,8 +115,6 @@ export default function App() {
   const totalRoiCredited = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "totalRoiCredited", args: [user], query });
   const totalIncome = (workingIncome.data ?? 0n) + (totalRoiCredited.data ?? 0n);
   const leadership = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "leadershipRank", args: [user], query });
-  const allocation = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5Allocation", args: [user], query });
-  const unlockAt = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5UnlockAt", args: [user], query });
   const b5Open = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "b5WithdrawEnabled", query });
   const owner = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "owner", query });
   const userBlocked = useReadContract({ abi: protocolAbi, address: protocolAddress, functionName: "blocked", args: [user], query: { ...query, refetchInterval: 5000 } });
@@ -120,6 +139,63 @@ export default function App() {
   const registrationAllowed = !rootUser.isLoading && rootUser.data !== undefined && (rootEstablished
     ? isAddress(sponsor) && sponsorAddress !== zeroAddress
     : !sponsor.trim());
+  const normalizedPhoneDigits = phoneNumber.replace(/\D/g, "");
+  const registrationFormValid = fullName.trim().length >= 2 && fullName.trim().length <= 100
+    && /^\+?[0-9().\s-]{7,24}$/.test(phoneNumber.trim()) && normalizedPhoneDigits.length >= 7 && normalizedPhoneDigits.length <= 15
+    && contactConsent;
+
+  const saveContactDetails = async (txHash: `0x${string}`, retry = false) => {
+    if (!address || !registrationFormValid || (!retry && contactSaveAttempt.current.toLowerCase() === txHash.toLowerCase())) return;
+    contactSaveAttempt.current = txHash;
+    setContactSaveStatus("signing");
+    setContactSaveMessage("");
+    try {
+      const normalizedName = fullName.trim().replace(/\s+/g, " ");
+      const normalizedPhone = phoneNumber.trim();
+      const signedMessage = `Bit Five member profile\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}\nFull name: ${normalizedName}\nPhone: ${normalizedPhone}\nRegistration transaction: ${txHash.toLowerCase()}`;
+      const signature = await signMessageAsync({ message: signedMessage });
+      setContactSaveStatus("saving");
+      const response = await fetch(`${apiBaseUrl}/api/v1/profile/contact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: address, fullName: normalizedName, phoneNumber: normalizedPhone, transactionHash: txHash, consent: true, signature })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Could not save your contact details.");
+      if (typeof payload.memberCode === "string") setMemberCode(payload.memberCode);
+      setProfileDisplayName(normalizedName);
+      try { localStorage.setItem(`bit5-profile-name:${targetChainId}:${protocolAddress.toLowerCase()}:${address.toLowerCase()}`, normalizedName); } catch { /* The saved API profile remains the source of truth. */ }
+      setContactSaveStatus("saved");
+      setContactSaveMessage("Your name and phone number were saved to your member profile.");
+    } catch (error) {
+      contactSaveAttempt.current = "";
+      setContactSaveStatus("error");
+      setContactSaveMessage(error instanceof Error ? error.message : "Could not save your contact details. Please retry.");
+    }
+  };
+  const loadProfileName = async () => {
+    if (!address) return;
+    setProfileNameLoadStatus("signing");
+    setProfileNameLoadMessage("");
+    try {
+      const signedMessage = `Bit Five profile name lookup\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}`;
+      const signature = await signMessageAsync({ message: signedMessage });
+      setProfileNameLoadStatus("loading");
+      const response = await fetch(`${apiBaseUrl}/api/v1/profile/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: address, signature }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Could not load your profile name.");
+      if (typeof payload.memberCode === "string") setMemberCode(payload.memberCode);
+      if (typeof payload.fullName !== "string" || !payload.fullName.trim()) throw new Error("No saved name is available for this wallet yet.");
+      setProfileDisplayName(payload.fullName);
+      setFullName(payload.fullName);
+      setPhoneNumber(typeof payload.phoneNumber === "string" ? payload.phoneNumber : "");
+      try { localStorage.setItem(`bit5-profile-name:${targetChainId}:${protocolAddress.toLowerCase()}:${address.toLowerCase()}`, payload.fullName); } catch { /* The authenticated API lookup still succeeded. */ }
+      setProfileNameLoadStatus("idle");
+    } catch (error) {
+      setProfileNameLoadStatus("error");
+      setProfileNameLoadMessage(error instanceof Error ? error.message : "Could not load your profile name.");
+    }
+  };
 
   // Refresh registration as soon as its transaction is mined instead of waiting
   // for the regular dashboard polling interval before leaving the registration page.
@@ -177,10 +253,14 @@ export default function App() {
 
   useEffect(() => {
     if (!address) return;
+    setMemberCode("");
+    let rememberedName = "";
+    try { rememberedName = localStorage.getItem(`bit5-profile-name:${targetChainId}:${protocolAddress.toLowerCase()}:${address.toLowerCase()}`) ?? ""; } catch { /* Ignore unavailable browser storage. */ }
+    setProfileDisplayName(rememberedName ?? "");
     const controller = new AbortController();
     fetch(`${apiBaseUrl}/api/v1/users/${address}/dashboard`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(d => { setActivity(d.activity ?? []); setActivityStatus(d.activity?.length ? "Latest on-chain events indexed from BSC Mainnet." : "No transactions yet."); })
+      .then(d => { setActivity(d.activity ?? []); setMemberCode(d.profile?.member_code ?? ""); setActivityStatus(d.activity?.length ? "Latest on-chain events indexed from BSC Mainnet." : "No transactions yet."); })
       .catch(() => !controller.signal.aborted && setActivityStatus("The activity indexer is syncing."));
     fetch(`${apiBaseUrl}/api/v1/users/${address}/team`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject())
@@ -206,14 +286,22 @@ export default function App() {
   if (!isConnected) return <Login connect={connect} logout={() => disconnect()} />;
   if (userBlocked.data === true && owner.data !== undefined && !isOwner) return <BlockedAccount address={address} disconnect={() => disconnect()} />;
 
-  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "Genealogy Tree", topup: "Top-up / Packages", withdraw: "Withdrawal", income: "Income Report", rank: "My Rank", transactions: "Transaction" };
+  const pageTitles: Record<Page, string> = { dashboard: "Dashboard", register: "Create Account", team: "Team List", genealogy: "10-Level Team", topup: "Deposit USDT", withdraw: "Withdrawal", referral: "Referral Center", income: "Income Ledger", rank: "My Rank", transactions: "Transaction History", tokenHistory: "Token History", reports: "Reports & Statements", notifications: "Notifications", support: "Support Desk", settings: "Account Settings" };
   const navItems: { key: Page; icon: string; label: string }[] = [
     { key: "dashboard", icon: "▦", label: "Dashboard" },
-    { key: "topup", icon: "＋", label: "Top-up" },
+    { key: "topup", icon: "⊕", label: "Deposit USDT" },
     { key: "withdraw", icon: "↗", label: "Withdrawal" },
-    { key: "income", icon: "▤", label: "Income Report" },
+    { key: "referral", icon: "♧", label: "Referral Center" },
+    { key: "team", icon: "♙", label: "Team List" },
+    { key: "genealogy", icon: "♧", label: "10-Level Team" },
+    { key: "income", icon: "$", label: "Income Ledger" },
+    { key: "tokenHistory", icon: "◈", label: "Token History" },
+    { key: "reports", icon: "▤", label: "Reports & Statements" },
+    { key: "notifications", icon: "♧", label: "Notifications" },
+    { key: "support", icon: "?", label: "Support Desk" },
+    { key: "settings", icon: "⚙", label: "Account Settings" },
     { key: "rank", icon: "◇", label: "My Rank" },
-    { key: "transactions", icon: "◷", label: "Transaction" },
+    { key: "transactions", icon: "◷", label: "Transaction History" },
   ];
 
   return <div className="member-layout">
@@ -222,12 +310,7 @@ export default function App() {
       <button className="member-brand" onClick={() => go("dashboard")}><img src="/brand.jpeg" alt="" /><span><b>BIT FIVE</b><small>MEMBER PANEL</small></span><i className="sidebar-close" onClick={e => { e.stopPropagation(); setMobileOpen(false); }}>×</i></button>
       <small className="menu-caption">MAIN MENU</small>
       {!registered && <button className={`member-nav ${page === "register" ? "selected" : ""}`} onClick={() => go("register")}><i>＋</i><span>Register</span></button>}
-      {registered && <>
-        {navItems.slice(0, 3).map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
-        <button className={`member-nav ${page === "team" || page === "genealogy" ? "selected" : ""}`} onClick={() => setTeamOpen(v => !v)}><i>♧</i><span>Team</span><b className={teamOpen ? "turn" : ""}>⌄</b></button>
-        {teamOpen && <div className="member-subnav"><button className={page === "team" ? "selected" : ""} onClick={() => go("team")}>Team List</button><button className={page === "genealogy" ? "selected" : ""} onClick={() => go("genealogy")}>Genealogy Tree</button></div>}
-        {navItems.slice(3).map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
-      </>}
+      {registered && navItems.map(item => <button key={item.key} className={`member-nav ${page === item.key ? "selected" : ""}`} onClick={() => go(item.key)}><i>{item.icon}</i><span>{item.label}</span></button>)}
       <div className="sidebar-bottom"><small>BSC MAINNET · CHAIN 56</small><a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer">View protocol on BscScan ↗</a><button className="sidebar-logout" onClick={() => { setMobileOpen(false); disconnect(); }}><i>↪</i><span>Log out</span></button></div>
     </aside>
 
@@ -236,15 +319,21 @@ export default function App() {
       {chainId !== targetChainId && <div className="chain-warning">Wrong network. <button onClick={() => switchChain({ chainId: targetChainId })}>Switch to BNB Smart Chain</button></div>}
       <main className="member-content">
         {!contractsConfigured && <Notice tone="amber" text="Mainnet contract settings are missing from this build." />}
-        {page === "register" && <RegisterPage address={address} sponsor={sponsor} rootEstablished={rootEstablished} rootLoading={rootUser.isLoading || rootUser.data === undefined} registrationAllowed={registrationAllowed} isPending={isPending} isWaitingForConfirmation={!!registrationTxHash && hash?.toLowerCase() === registrationTxHash.toLowerCase() && !receipt.isSuccess} status={status} hash={hash} write={() => { setRegistrationConfirmed(false); setRegistrationTxHash(undefined); void writeContractAsync({ abi: protocolAbi, address: protocolAddress, functionName: "register", args: [sponsorAddress] }).then(setRegistrationTxHash).catch(() => undefined); }} />}
-        {registered && page === "dashboard" && <Dashboard address={address} active={active} count={Number(positionCount.data ?? 0n)} earnings={earnings.data} pendingYield={pendingYield.data} allocation={allocation.data} directs={directs.data} volume={volume.data} businessVolume={businessVolume.data} strongBusinessVolume={strongBusinessVolume.data} weakBusinessVolume={weakBusinessVolume} totalIncome={totalIncome} leadership={leadership.data} b5Open={!!b5Open.data} unlockAt={unlockAt.data} activity={activity} go={go} copied={copied} onCopy={() => { void navigator.clipboard.writeText(`${window.location.origin}/?ref=${address}`).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); }); }} claim={() => claim("claimYield")} isPending={isPending} receiptPending={receipt.isLoading} status={status} hash={hash} isOwner={isOwner} admin={admin} blockTarget={blockTarget} setBlockTarget={setBlockTarget} blockTargetValid={blockTargetValid} blockTargetAddress={blockTargetAddress} blockTargetMember={blockTargetMember} blockTargetNotFound={!!blockTarget.trim() && !isAddress(blockTarget) && !blockTargetMember && blockTargetLookupReady} targetBlocked={!!targetBlocked.data} onBlock={toggleBlocked} />}
+        {page === "register" && <RegisterPage address={address} sponsor={sponsor} rootEstablished={rootEstablished} rootLoading={rootUser.isLoading || rootUser.data === undefined} registrationAllowed={registrationAllowed} fullName={fullName} setFullName={setFullName} phoneNumber={phoneNumber} setPhoneNumber={setPhoneNumber} contactConsent={contactConsent} setContactConsent={setContactConsent} formValid={registrationFormValid} isPending={isPending} isWaitingForConfirmation={!!registrationTxHash && hash?.toLowerCase() === registrationTxHash.toLowerCase() && !receipt.isSuccess} status={status} hash={hash} write={() => { setRegistrationConfirmed(false); setRegistrationTxHash(undefined); setContactSaveStatus("idle"); contactSaveAttempt.current = ""; void writeContractAsync({ abi: protocolAbi, address: protocolAddress, functionName: "register", args: [sponsorAddress] }).then(setRegistrationTxHash).catch(() => undefined); }} />}
+        {registered && page === "dashboard" && <Dashboard address={address} memberCode={memberCode} profileDisplayName={profileDisplayName} profileNameLoadStatus={profileNameLoadStatus} profileNameLoadMessage={profileNameLoadMessage} loadProfileName={loadProfileName} active={active} count={Number(positionCount.data ?? 0n)} earnings={earnings.data} pendingYield={pendingYield.data} allocation={b5Outstanding} b5Positions={b5Positions} b5Claimable={b5Claimable} b5Allowance={b5TreasuryAllowance.data} directs={directs.data} volume={volume.data} businessVolume={businessVolume.data} strongBusinessVolume={strongBusinessVolume.data} weakBusinessVolume={weakBusinessVolume} totalIncome={totalIncome} leadership={leadership.data} b5Open={!!b5Open.data} unlockAt={nextB5UnlockAt} activity={activity} go={go} copied={copied} onCopy={() => { void navigator.clipboard.writeText(`${window.location.origin}/?ref=${address}`).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); }); }} claim={() => claim("claimYield")} claimB5={() => claim("claimB5")} isPending={isPending} receiptPending={receipt.isLoading} status={status} hash={hash} isOwner={isOwner} admin={admin} blockTarget={blockTarget} setBlockTarget={setBlockTarget} blockTargetValid={blockTargetValid} blockTargetAddress={blockTargetAddress} blockTargetMember={blockTargetMember} blockTargetNotFound={!!blockTarget.trim() && !isAddress(blockTarget) && !blockTargetMember && blockTargetLookupReady} targetBlocked={!!targetBlocked.data} onBlock={toggleBlocked} contactSaveStatus={contactSaveStatus} contactSaveMessage={contactSaveMessage} hasPendingContactSave={!!registrationTxHash && contactSaveStatus === "idle"} saveContactDetails={() => registrationTxHash && void saveContactDetails(registrationTxHash, true)} retryContactSave={() => registrationTxHash && void saveContactDetails(registrationTxHash, true)} />}
         {registered && page === "team" && <TeamPage title="Team List" subtitle={teamStatus} members={team.filter(m => Number(m.depth) === 0)} rootAddress={address} />}
         {registered && page === "genealogy" && <TeamPage title="Your Genealogy" subtitle={teamStatus} members={team} rootAddress={address} genealogy />}
+        {registered && page === "referral" && <ReferralCenter address={address} memberCode={memberCode} sponsor={effectiveSponsor} team={team} copied={copied} onCopy={() => { void navigator.clipboard.writeText(`${window.location.origin}/?ref=${address}`).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); }); }} />}
         {registered && page === "topup" && <TopupPage packages={packages} selected={selected} setSelected={setSelected} chosen={chosen} count={Number(positionCount.data ?? 0n)} balance={usdtBalance.data} hasAllowance={hasAllowance} isPending={packageTx.isPending} receiptPending={packageReceipt.isLoading} action={packageAction} receiptStatus={packageReceipt.data?.status} receiptError={packageReceipt.isError ? (packageReceipt.error as any)?.shortMessage ?? packageReceipt.error?.message : ""} walletError={packageTx.error ? (packageTx.error as any)?.shortMessage ?? packageTx.error.message : ""} hash={packageTx.data} purchasePackageId={purchasePackageId} approve={startUsdtApproval} purchase={startPackagePurchase} resetFlow={resetPackageFlow} goDashboard={() => go("dashboard")} />}
-        {registered && page === "withdraw" && <WithdrawPage earnings={earnings.data} amount={withdrawAmount} setAmount={setWithdrawAmount} allowance={b5TreasuryAllowance.data} enoughAllowance={enoughB5FeeAllowance} active={active} isPending={isPending} withdraw={() => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "withdrawEarnings", args: [withdrawBase] })} allocation={allocation.data} unlockAt={unlockAt.data} b5Open={!!b5Open.data} claimB5={() => claim("claimB5")} canWithdrawPrincipal={!!canWithdrawPrincipal.data} withdrawPrincipal={() => claim("withdrawPrincipal")} status={status} hash={hash} isOwner={isOwner} admin={admin} />}
+        {registered && page === "withdraw" && <WithdrawPage earnings={earnings.data} pendingYield={pendingYield.data} amount={withdrawAmount} setAmount={setWithdrawAmount} allowance={b5TreasuryAllowance.data} enoughAllowance={enoughB5FeeAllowance} active={active} isPending={isPending} withdraw={() => writeContract({ abi: protocolAbi, address: protocolAddress, functionName: "withdrawEarnings", args: [withdrawBase] })} allocation={b5Outstanding} b5Positions={b5Positions} b5Claimable={b5Claimable} b5Allowance={b5TreasuryAllowance.data} unlockAt={nextB5UnlockAt} b5Open={!!b5Open.data} claimB5={() => claim("claimB5")} canWithdrawPrincipal={!!canWithdrawPrincipal.data} withdrawPrincipal={() => claim("withdrawPrincipal")} status={status} hash={hash} isOwner={isOwner} admin={admin} />}
         {registered && page === "income" && <IncomePage earnings={earnings.data} pendingYield={pendingYield.data} activity={activity} activityStatus={activityStatus} />}
         {registered && page === "rank" && <RankPage rank={Number(leadership.data ?? 0)} volume={volume.data} directs={directs.data} />}
         {registered && page === "transactions" && <TransactionsPage activity={activity} activityStatus={activityStatus} />}
+        {registered && page === "tokenHistory" && <TokenHistoryPage activity={activity} activityStatus={activityStatus} />}
+        {registered && page === "reports" && <ReportsStatementsPage activity={activity} activityStatus={activityStatus} />}
+        {registered && page === "notifications" && <NotificationsPage address={address!} activity={activity} activityStatus={activityStatus} />}
+        {registered && page === "support" && <SupportDeskPage address={address!} isOwner={isOwner} />}
+        {registered && page === "settings" && <AccountSettingsPage address={address!} memberCode={memberCode} fullName={profileDisplayName || fullName} phoneNumber={phoneNumber} setFullName={setFullName} setPhoneNumber={setPhoneNumber} loadProfileName={loadProfileName} onSaved={(name: string) => { setProfileDisplayName(name); try { localStorage.setItem(`bit5-profile-name:${targetChainId}:${protocolAddress.toLowerCase()}:${address!.toLowerCase()}`, name); } catch { /* Keep the API as source of truth. */ } }} />}
       </main>
     </div>
   </div>;
@@ -258,13 +347,16 @@ function BlockedAccount({ address, disconnect }: { address?: `0x${string}`; disc
   return <div className="auth-shell"><header className="auth-brand"><img src="/brand.jpeg" alt="Bit Five" /><span><b>BIT FIVE</b><small>BNB SMART CHAIN MAINNET</small></span></header><section className="auth-card"><div className="auth-mark">!</div><small className="auth-eyebrow">ACCOUNT RESTRICTED</small><h1>This account is blocked</h1><p>This wallet is blocked by the Bit Five protocol. Member pages and actions are unavailable for this account.</p><div className="auth-points"><span>Connected wallet: {short(address)}</span><span>Contact the protocol administrator if you believe this is an error.</span><span>On-chain data remains publicly viewable.</span></div><a className="btn outline auth-connect" href={`${explorerUrl}/address/${address}`} target="_blank" rel="noreferrer">View wallet on BscScan ↗</a><button className="btn primary auth-connect" onClick={disconnect}>Disconnect wallet</button></section><p className="auth-footer">BIT FIVE · Member portal</p></div>;
 }
 
-function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registrationAllowed, isPending, isWaitingForConfirmation, status, hash, write }: { address?: `0x${string}`; sponsor: string; rootEstablished: boolean; rootLoading: boolean; registrationAllowed: boolean; isPending: boolean; isWaitingForConfirmation: boolean; status: string; hash?: `0x${string}`; write: () => void }) {
+function RegisterPage({ address, sponsor, rootEstablished, rootLoading, registrationAllowed, fullName, setFullName, phoneNumber, setPhoneNumber, contactConsent, setContactConsent, formValid, isPending, isWaitingForConfirmation, status, hash, write }: { address?: `0x${string}`; sponsor: string; rootEstablished: boolean; rootLoading: boolean; registrationAllowed: boolean; fullName: string; setFullName: (value: string) => void; phoneNumber: string; setPhoneNumber: (value: string) => void; contactConsent: boolean; setContactConsent: (value: boolean) => void; formValid: boolean; isPending: boolean; isWaitingForConfirmation: boolean; status: string; hash?: `0x${string}`; write: () => void }) {
   const sponsorValid = isAddress(sponsor) && sponsor.toLowerCase() !== zeroAddress;
-  return <section className="content-card narrow-card"><PageHeading title="Create your account" subtitle="Register on-chain under your sponsor's wallet. No email or password required." /><div className="join-steps"><span className="step-current">01 <b>Connect wallet</b></span><i>→</i><span>02 <b>Register</b></span><i>→</i><span>03 <b>Choose package</b></span></div><div className="wallet-confirm"><span className="status-dot" /> Wallet connected <b>{short(address)}</b></div>{rootEstablished ? <label className="field-label">Sponsor wallet address <small>Open your sponsor's referral link. Registration without a registered sponsor is blocked by the contract.</small><input readOnly value={sponsor} placeholder="Open a referral link to continue" /></label> : <div className="notice notice-green">{rootLoading ? "Checking whether the network root is set…" : "First account: this wallet will become the network root. No sponsor is required."}</div>}{rootEstablished && !sponsorValid && !rootLoading && <Notice tone="amber" text="A valid sponsor referral link is required before registration." />}<p className="helper-copy">Your sponsor is recorded permanently in the BNB Smart Chain transaction.</p><button className="btn primary action-wide" disabled={isPending || isWaitingForConfirmation || !registrationAllowed || rootLoading} onClick={write}>{isPending ? "Confirm in wallet…" : isWaitingForConfirmation ? "Waiting for BSC confirmation…" : "Create account on-chain →"}</button>{status && <TxStatus status={isWaitingForConfirmation ? "Transaction submitted · waiting for BSC confirmation…" : status} hash={hash} />}</section>;
+  return <section className="content-card narrow-card"><PageHeading title="Join Bit Five" subtitle="Create your member profile and register on BNB Smart Chain." /><div className="join-steps"><span className="step-current">01 <b>Connect wallet</b></span><i>→</i><span>02 <b>Register</b></span><i>→</i><span>03 <b>Choose package</b></span></div><div className="wallet-confirm"><span className="status-dot" /> Wallet connected <b>{short(address)}</b></div><label className="field-label">Full name<input autoComplete="name" maxLength={100} value={fullName} onChange={event => setFullName(event.target.value)} placeholder="Enter your name" /></label><label className="field-label">Phone number<input type="tel" autoComplete="tel" inputMode="tel" maxLength={24} value={phoneNumber} onChange={event => setPhoneNumber(event.target.value)} placeholder="e.g. +1 234 567 890" /></label>{rootEstablished ? <label className="field-label">Sponsor / referral ID <small>Open your sponsor’s referral link. Registration without a registered sponsor is blocked by the contract.</small><input readOnly value={sponsor} placeholder="Open a referral link to continue" /></label> : <div className="notice notice-green">{rootLoading ? "Checking whether the network root is set…" : "First account: this wallet will become the network root. No sponsor is required."}</div>}{rootEstablished && !sponsorValid && !rootLoading && <Notice tone="amber" text="A valid sponsor referral link is required before registration." />}<div className="profile-consent"><label><input type="checkbox" checked={contactConsent} onChange={event => setContactConsent(event.target.checked)} /><span>I agree that Bit Five stores my name and phone number in its member database for account support. These details are not written to the blockchain.</span></label></div><p className="helper-copy">Your wallet and sponsor are recorded on-chain. Name and phone are stored privately in the project database after this registration is confirmed.</p><button className="btn primary action-wide" disabled={isPending || isWaitingForConfirmation || !registrationAllowed || rootLoading || !formValid} onClick={write}>{isPending ? "Confirm in wallet…" : isWaitingForConfirmation ? "Waiting for BSC confirmation…" : "Create account on-chain →"}</button>{status && <TxStatus status={isWaitingForConfirmation ? "Transaction submitted · waiting for BSC confirmation…" : status} hash={hash} />}</section>;
 }
 
-function Dashboard({ address, active, count, earnings, pendingYield, allocation, directs, volume, businessVolume, strongBusinessVolume, weakBusinessVolume, totalIncome, leadership, b5Open, unlockAt, activity, go, copied, onCopy, claim, isPending, receiptPending, status, hash, isOwner, admin, blockTarget, setBlockTarget, blockTargetValid, blockTargetAddress, blockTargetMember, blockTargetNotFound, targetBlocked, onBlock }: any) {
+function Dashboard({ address, memberCode, profileDisplayName, profileNameLoadStatus, profileNameLoadMessage, loadProfileName, active, count, earnings, pendingYield, allocation, b5Positions, b5Claimable, b5Allowance, directs, volume, businessVolume, strongBusinessVolume, weakBusinessVolume, totalIncome, leadership, b5Open, unlockAt, activity, go, copied, onCopy, claim, claimB5, isPending, receiptPending, status, hash, isOwner, admin, blockTarget, setBlockTarget, blockTargetValid, blockTargetAddress, blockTargetMember, blockTargetNotFound, targetBlocked, onBlock, contactSaveStatus, contactSaveMessage, hasPendingContactSave, saveContactDetails, retryContactSave }: any) {
   return <div className="page-stack dashboard-page"><section className="dashboard-welcome"><div><small>MEMBER DASHBOARD</small><h2>Welcome back, {short(address)}</h2><p>{active ? `${count} package position${count === 1 ? "" : "s"} active on-chain` : "Your profile is ready. Choose a package to get started."}</p></div><button className="btn primary" onClick={() => go("topup")}>{active ? "Buy another package" : "Topup now"} →</button></section>
+    <section className="balance-actions-card"><div className="balance-actions-heading"><div><div className="balance-member-identity"><small>LIVE ACCOUNT LEDGER</small><span>ID: {memberCode || "Assigning ID…"}</span>{profileDisplayName ? <b>{profileDisplayName}</b> : <button className="profile-name-action" onClick={loadProfileName} disabled={profileNameLoadStatus === "signing" || profileNameLoadStatus === "loading"}>{profileNameLoadStatus === "signing" ? "Sign to load…" : profileNameLoadStatus === "loading" ? "Loading…" : "Show saved name"}</button>}</div>{profileNameLoadMessage && <small className="profile-name-error">{profileNameLoadMessage}</small>}<p>Available withdrawable balance</p><h2>${money(earnings)} <span>USDT</span></h2></div><span className="balance-ledger-status">BSC · LIVE</span></div><div className="balance-actions-metrics"><div><small>Total earnings</small><b>${money(totalIncome)} USDT</b></div><div><small>Package positions</small><b>{count}</b></div></div><div className="balance-action-buttons"><button className="btn primary" onClick={() => go("topup")}>＋ &nbsp; Deposit USDT</button><button className="btn outline" onClick={() => go("withdraw")}>↗ &nbsp; Withdraw</button></div><p className="balance-action-note">USDT deposits are made by choosing and activating a package. Withdrawals use your internal earnings balance and contract conditions.</p></section>
+    <B5AllocationPanel positions={b5Positions} total={allocation} claimable={b5Claimable} treasuryAllowance={b5Allowance} claimsEnabled={b5Open} pending={isPending || receiptPending} claim={claimB5} />
+    {contactSaveStatus === "idle" && hasPendingContactSave && <div className="notice notice-amber">Registration is confirmed. Sign once with your wallet to save your name and phone number to the member database. This signature does not send a transaction or cost gas. <button className="inline-action" onClick={saveContactDetails}>Sign &amp; save details</button></div>}{contactSaveStatus === "signing" && <div className="notice notice-amber">Confirm the profile signature in your wallet. It does not send a transaction or cost gas.</div>}{contactSaveStatus === "saving" && <div className="notice notice-amber">Saving your member name and phone number…</div>}{contactSaveStatus === "saved" && <div className="notice notice-green">{contactSaveMessage}</div>}{contactSaveStatus === "error" && <div className="notice notice-amber">{contactSaveMessage} <button className="inline-action" onClick={retryContactSave}>Retry save</button></div>}
     <section className="content-card referral-panel"><div><span className="mini-icon">↗</span><div><h3>Your referral link</h3><p>Share it to invite a new member. Their registration and sponsor are recorded on-chain.</p></div></div><div className="copy-row"><input readOnly value={`${window.location.origin}/?ref=${address}`} /><button className="btn outline" onClick={onCopy}>{copied ? "Copied ✓" : "Copy link"}</button></div></section>
     <section className="stat-grid dashboard-client-stats"><Stat label="Total business" value={`$${money(businessVolume)}`} note="Team business package volume" icon="▤" /><Stat label="Strong & weaker leg business" dualValues={[{ label: "Strong", value: `$${money(strongBusinessVolume)}` }, { label: "Weaker", value: `$${money(weakBusinessVolume)}` }]} note="On-chain branch totals" icon="↔" /><Stat label="Current rank" value={Number(leadership ?? 0) ? `Bit-${leadership}` : "Unranked"} note="Leadership qualification" icon="◇" /><Stat label="Total income" value={`$${money(totalIncome)}`} note="Lifetime credited income" icon="$" /></section>
     <section className="content-card"><div className="section-heading-row"><PageHeading title="Daily ROI claim" subtitle="Claim after the daily close at 5:30 AM IST. This also credits eligible Level and Rank income to your sponsors." /><b>${money(pendingYield)}</b></div><button className="btn primary action-wide" disabled={isPending || receiptPending || (pendingYield ?? 0n) === 0n} onClick={claim}>{isPending ? "Confirm in wallet…" : receiptPending ? "Waiting for confirmation…" : (pendingYield ?? 0n) === 0n ? "No daily ROI ready" : "Claim daily ROI"}</button>{status && <TxStatus status={status} hash={hash} />}</section>
@@ -273,6 +365,25 @@ function Dashboard({ address, active, count, earnings, pendingYield, allocation,
     {isOwner && <AdminPanel on={b5Open} pending={isPending} toggle={admin} blockTarget={blockTarget} setBlockTarget={setBlockTarget} blockTargetValid={blockTargetValid} blockTargetAddress={blockTargetAddress} blockTargetMember={blockTargetMember} blockTargetNotFound={blockTargetNotFound} targetBlocked={targetBlocked} onBlock={onBlock} />}
     {unlockAt && <span className="sr-only">B5 unlock timestamp {String(unlockAt)}</span>}
   </div>;
+}
+
+function B5AllocationPanel({ positions = [], total = 0n, claimable = 0n, treasuryAllowance = 0n, claimsEnabled, pending, claim }: any) {
+  const claimableAmount = BigInt(claimable ?? 0n);
+  const allowance = BigInt(treasuryAllowance ?? 0n);
+  const allowanceReady = allowance >= claimableAmount;
+  const canClaim = claimsEnabled && claimableAmount > 0n && allowanceReady && !pending;
+  const unlockDate = (value: bigint) => new Date(Number(value) * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const positionStatus = (item: any) => {
+    if (item.principalWithdrawn) return "Forfeited after principal withdrawal";
+    if (item.b5Claimed) return "Claimed";
+    if (item.unlockAt <= BigInt(Math.floor(Date.now() / 1000))) {
+      if (!claimsEnabled) return "Unlocked · claims paused";
+      if (!allowanceReady) return "Unlocked · treasury approval needed";
+      return "Ready to claim";
+    }
+    return `Unlocks ${unlockDate(item.unlockAt)}`;
+  };
+  return <section className="content-card b5-allocation-card"><div className="b5-allocation-heading"><div><small>B5 TOKEN</small><h3>Package allocation</h3><p>Each package receives a B5 allocation with its own 180-day unlock.</p></div><span className="b5-allocation-total">{money(total)} B5</span></div><div className="b5-allocation-state">Contract claims: <b className={claimsEnabled ? "b5-on" : "b5-off"}>{claimsEnabled ? "ON" : "OFF"}</b>{claimableAmount > 0n && <span> · Ready: {money(claimableAmount)} B5</span>}</div>{positions.length ? <div className="b5-position-list">{positions.map((item: any) => <div className="b5-position-row" key={item.index}><div><b>{packages[item.packageId]?.name ?? `Package ${item.packageId + 1}`} · {money(item.principal)} B5</b><small>Unlock date: {unlockDate(item.unlockAt)}</small></div><span className={positionStatus(item) === "Ready to claim" ? "b5-on" : ""}>{positionStatus(item)}</span></div>)}</div> : <p className="empty-state">Buy a package to receive a B5 allocation.</p>}{claimableAmount > 0n && !allowanceReady && <div className="notice notice-amber">B5 treasury allowance is {money(allowance)} B5; {money(claimableAmount)} B5 is ready. The treasury wallet needs to approve the V9 contract.</div>}<button className="btn primary action-wide" disabled={!canClaim} onClick={claim}>{pending ? "Confirm in wallet…" : !claimsEnabled ? "B5 claims are off" : claimableAmount === 0n ? "No B5 unlocked yet" : !allowanceReady ? "Treasury approval required" : `Claim ${money(claimableAmount)} B5`}</button></section>;
 }
 
 function TopupPage({ packages: list, selected, setSelected, chosen, count, balance, hasAllowance, isPending, receiptPending, action, receiptStatus, receiptError, walletError, hash, purchasePackageId, approve, purchase, resetFlow, goDashboard }: any) {
@@ -304,8 +415,13 @@ function TopupPage({ packages: list, selected, setSelected, chosen, count, balan
   </section></div>;
 }
 
-function WithdrawPage({ earnings, amount, setAmount, allowance, enoughAllowance, active, isPending, withdraw, allocation, unlockAt, b5Open, claimB5, canWithdrawPrincipal, withdrawPrincipal, status, hash, isOwner, admin }: any) {
-  return <div className="page-stack"><div className="dashboard-columns"><section className="content-card"><PageHeading title="Withdraw USDT" subtitle="Withdraw from your internal earnings balance" /><div className="withdraw-balance"><small>AVAILABLE BALANCE</small><b>${money(earnings)}</b><span>Minimum $10 · Maximum $1,000 per day</span></div><label className="field-label">Withdrawal amount<input type="number" min="10" max="1000" value={amount} onChange={e => setAmount(e.target.value)} /></label><div className="fee-breakdown"><span>USDT fee <b>5%</b></span><span>B5 fee <b>5% from treasury</b></span><span>V6 treasury allowance <b>{money(allowance)} B5</b></span></div>{!enoughAllowance && <Notice tone="amber" text="Withdrawal is paused: the B5 token treasury wallet must approve this V6 contract to spend the B5 fee. Approval must be sent from the treasury wallet; it does not transfer B5. After approval confirms, refresh this page." />}<button className="btn primary action-wide" disabled={!active || isPending || !enoughAllowance || Number(amount) < 10 || Number(amount) > 1000} onClick={withdraw}>{isPending ? "Confirm in wallet…" : "Withdraw USDT"}</button></section><section className="content-card"><PageHeading title="B5 package allocation" subtitle="Package allocations unlock 180 days after purchase" /><div className="withdraw-balance"><small>TOTAL ALLOCATION</small><b>{money(allocation)} B5</b><span>Unlock date {unlockAt ? new Date(Number(unlockAt) * 1000).toLocaleDateString() : "—"}</span></div><p className="helper-copy">B5 wallet claims are {b5Open ? "enabled" : "currently disabled by the protocol owner"}.</p><button className="btn outline action-wide" disabled={!b5Open || isPending || !unlockAt || Date.now() / 1000 < Number(unlockAt)} onClick={claimB5}>{b5Open ? "Claim unlocked B5" : "B5 claims are off"}</button></section></div><section className="content-card principal-card"><div><PageHeading title="Principal withdrawal" subtitle="Available during the 15-day window when contract conditions are met" /><p className="helper-copy">A 20% fee applies. The contract processes every eligible package position in one transaction.</p></div><button className="btn outline" disabled={!canWithdrawPrincipal || isPending} onClick={withdrawPrincipal}>Withdraw eligible principal</button></section>{isOwner && <AdminPanel on={b5Open} pending={isPending} toggle={admin} />}{status && <TxStatus status={status} hash={hash} />}</div>;
+function WithdrawPage({ earnings, pendingYield, amount, setAmount, allowance, enoughAllowance, active, isPending, withdraw, allocation, b5Positions, b5Claimable, b5Allowance, unlockAt, b5Open, claimB5, canWithdrawPrincipal, withdrawPrincipal, status, hash, isOwner, admin }: any) {
+  let grossWei = 0n;
+  try { grossWei = parseUnits(String(amount || "0"), 18); } catch { grossWei = 0n; }
+  const usdtFeeWei = grossWei * 500n / 10_000n;
+  const netPayoutWei = grossWei - usdtFeeWei;
+  const b5FeeWei = grossWei * 500n / 10_000n;
+  return <div className="page-stack"><div className="dashboard-columns"><section className="content-card"><PageHeading title="Withdraw USDT" subtitle="Withdraw from your internal earnings balance" /><div className="withdraw-balance"><small>AVAILABLE BALANCE</small><b className="amount-positive">${money(earnings)} USDT</b><span>Minimum $10 · Maximum $1,000 per day</span></div><label className="field-label">Withdrawal amount<input type="number" min="10" max="1000" value={amount} onChange={e => setAmount(e.target.value)} /></label><div className="withdraw-breakdown"><h3>Withdrawal Breakdown</h3><div><span>Gross requested amount</span><b className="amount-neutral">${money(grossWei)} USDT</b></div><div><span>USDT service charge (5%)</span><b className="amount-pending">−${money(usdtFeeWei)} USDT</b></div><div><span>B5 treasury fee (5%)</span><b className="amount-pending">${money(b5FeeWei)} B5</b></div><div className="withdraw-net-row"><span>Net payout to receive</span><b className="amount-positive">${money(netPayoutWei)} USDT</b></div></div><div className="withdraw-rules"><h3>Withdrawal Rules &amp; Limits</h3><div><span>Available balance</span><b className="amount-positive">${money(earnings)}</b></div><div><span>Pending daily ROI</span><b className="amount-pending">${money(pendingYield)}</b></div><div><span>B5 fee allowance</span><b className={enoughAllowance ? "amount-positive" : "amount-pending"}>{money(allowance)} B5</b></div><div><span>Daily withdrawal limit</span><b className="amount-neutral">$1,000</b></div></div>{!enoughAllowance && <Notice tone="amber" text="Withdrawal is paused: the B5 token treasury wallet must approve this V9 contract to spend the B5 fee. Approval must be sent from the treasury wallet; it does not transfer B5. After approval confirms, refresh this page." />}<button className="btn primary action-wide" disabled={!active || isPending || !enoughAllowance || Number(amount) < 10 || Number(amount) > 1000} onClick={withdraw}>{isPending ? "Confirm in wallet…" : `Submit withdrawal request · $${money(netPayoutWei)}`}</button></section><B5AllocationPanel positions={b5Positions} total={allocation} claimable={b5Claimable} treasuryAllowance={b5Allowance} claimsEnabled={b5Open} pending={isPending} claim={claimB5} /></div><section className="content-card principal-card"><div><PageHeading title="Principal withdrawal" subtitle="Available during the 15-day window when contract conditions are met" /><p className="helper-copy">A 20% fee applies. The contract processes every eligible package position in one transaction.</p></div><button className="btn outline" disabled={!canWithdrawPrincipal || isPending} onClick={withdrawPrincipal}>Withdraw eligible principal</button></section>{isOwner && <AdminPanel on={b5Open} pending={isPending} toggle={admin} />}{status && <TxStatus status={status} hash={hash} />}</div>;
 }
 
 function IncomePage({ earnings, pendingYield, activity, activityStatus }: any) {
@@ -356,6 +472,112 @@ function TeamNodeCard({ address, member, isRoot = false }: { address: string; me
 
 function TransactionsPage({ activity, activityStatus }: { activity: Activity[]; activityStatus: string }) {
   return <div className="page-stack"><section className="content-card"><PageHeading title="Transactions" subtitle={activityStatus} /><ActivityList activity={activity} /></section></div>;
+}
+
+function ReferralCenter({ address, memberCode, sponsor, team, copied, onCopy }: any) {
+  const directCount = team.filter((member: TeamMember) => Number(member.depth) === 0).length;
+  return <div className="page-stack"><section className="content-card"><PageHeading title="Your direct sponsor link" subtitle="Invite a new member; sponsor attribution is confirmed on-chain." /><div className="referral-id-grid"><div><small>YOUR MEMBER ID</small><b>{memberCode || "Assigning ID…"}</b></div><div><small>DIRECT REFERRALS</small><b>{directCount}</b></div><div><small>SPONSOR WALLET</small><b>{short(sponsor) || "Network root"}</b></div></div><label className="field-label">Your referral link<input readOnly value={`${window.location.origin}/?ref=${address}`} /></label><button className="btn primary action-wide" onClick={onCopy}>{copied ? "Copied ✓" : "Copy referral link"}</button></section></div>;
+}
+
+function TokenHistoryPage({ activity, activityStatus }: { activity: Activity[]; activityStatus: string }) {
+  const [tab, setTab] = useState<"allocations" | "claims">("allocations");
+  const rows = activity.filter(item => tab === "claims" ? item.event_name === "B5Claimed" : item.event_name === "Activated");
+  const shown = rows.map(item => item.event_name === "Activated" ? { ...item, displayTitle: "B5 package allocation created" } : { ...item, displayTitle: "B5 tokens claimed" });
+  return <div className="page-stack"><section className="content-card"><PageHeading title="B5 Token History" subtitle={`${activityStatus} · Package allocations are created at activation; claimed tokens appear after the B5 transfer transaction.`} /><div className="income-filters"><button className={`income-filter ${tab === "allocations" ? "active" : ""}`} onClick={() => setTab("allocations")}>Package allocations</button><button className={`income-filter ${tab === "claims" ? "active" : ""}`} onClick={() => setTab("claims")}>B5 claims</button></div>{shown.length ? <div className="activity-list">{shown.map((item, index) => <a key={`${item.transaction_hash}-${index}`} href={txUrl(item.transaction_hash)} target="_blank" rel="noreferrer" className="activity-row"><span className="activity-mark">◈</span><span className="activity-info"><b>{item.displayTitle}</b><small>{new Date(item.block_timestamp).toLocaleString()} · {short(item.transaction_hash)}</small></span><strong>{item.amount ? `${Number(item.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} B5` : "View tx"} ↗</strong></a>)}</div> : <p className="empty-state">No {tab === "claims" ? "B5 claim" : "package allocation"} records yet.</p>}</section></div>;
+}
+
+function ReportsStatementsPage({ activity, activityStatus }: { activity: Activity[]; activityStatus: string }) {
+  const [tab, setTab] = useState<"deposits" | "withdrawals" | "roi">("deposits");
+  const records = activity.filter(item => tab === "deposits" ? item.event_name === "Activated" : tab === "withdrawals" ? ["EarningsWithdrawn", "PrincipalWithdrawn"].includes(item.event_name) : item.event_name === "YieldClaimed");
+  const labels = { deposits: "Deposits Statement", withdrawals: "Withdrawals Statement", roi: "ROI Accruals Statement" };
+  const exportCsv = () => {
+    const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const lines = [["Date", "Type", "Amount", "Transaction Hash"], ...records.map(item => [new Date(item.block_timestamp).toISOString(), eventTitle(item), item.amount ?? "", item.transaction_hash])];
+    const blob = new Blob([lines.map(row => row.map(quote).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `bit-five-${tab}-statement.csv`; link.click(); URL.revokeObjectURL(url);
+  };
+  return <div className="page-stack"><section className="content-card"><PageHeading title="Financial Reports & Statements" subtitle={`${activityStatus} · Export your indexed on-chain statement.`} /><button className="btn outline" disabled={!records.length} onClick={exportCsv}>⇩ &nbsp; Export Excel / CSV</button><div className="income-filters report-tabs">{(Object.keys(labels) as (keyof typeof labels)[]).map(key => <button key={key} className={`income-filter ${tab === key ? "active" : ""}`} onClick={() => setTab(key)}>{labels[key]}</button>)}</div>{records.length ? <ActivityList activity={records} /> : <p className="empty-state">No statement records found for this category.</p>}</section></div>;
+}
+
+function NotificationsPage({ address, activity, activityStatus }: { address: string; activity: Activity[]; activityStatus: string }) {
+  const storageKey = `bit5-read-notifications:${address.toLowerCase()}`;
+  const [readIds, setReadIds] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(storageKey) ?? "[]"); } catch { return []; } });
+  useEffect(() => { try { setReadIds(JSON.parse(localStorage.getItem(storageKey) ?? "[]")); } catch { setReadIds([]); } }, [storageKey]);
+  const idFor = (item: Activity, index: number) => `${item.transaction_hash}:${item.event_name}:${index}`;
+  const unread = activity.filter((item, index) => !readIds.includes(idFor(item, index))).length;
+  const markRead = (id: string) => { const next = [...new Set([...readIds, id])]; setReadIds(next); try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Notifications remain usable for this session. */ } };
+  const markAll = () => { const next = activity.map(idFor); setReadIds(next); try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Notifications remain usable for this session. */ } };
+  return <div className="page-stack"><section className="content-card"><div className="section-heading-row"><PageHeading title="Notifications" subtitle={`On-chain account updates · ${activityStatus}`} /><button className="btn outline" disabled={!unread} onClick={markAll}>✓ &nbsp; Mark all as read</button></div><div className="notification-list">{activity.map((item, index) => { const id = idFor(item, index); const isRead = readIds.includes(id); return <article key={id} className={`notification-row ${isRead ? "read" : "unread"}`}><span className="activity-mark">{isRead ? "✓" : "●"}</span><div className="activity-info"><b>{eventTitle(item)}</b><small>{new Date(item.block_timestamp).toLocaleString()} · {short(item.transaction_hash)}</small></div>{item.amount && <strong>${Number(item.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong>}<button className="text-link" onClick={() => markRead(id)}>{isRead ? "Read" : "Mark read"}</button></article>; })}{!activity.length && <p className="empty-state">No notifications yet.</p>}</div></section></div>;
+}
+
+function AccountSettingsPage({ address, memberCode, fullName, phoneNumber, setFullName, setPhoneNumber, loadProfileName, onSaved }: any) {
+  const { signMessageAsync } = useSignMessage();
+  const [name, setName] = useState(fullName ?? ""); const [phone, setPhone] = useState(phoneNumber ?? "");
+  const [saving, setSaving] = useState(false); const [message, setMessage] = useState("");
+  useEffect(() => { setName(fullName ?? ""); setPhone(phoneNumber ?? ""); }, [fullName, phoneNumber]);
+  const save = async () => {
+    const normalizedName = name.trim().replace(/\s+/g, " "); const normalizedPhone = phone.trim();
+    if (normalizedName.length < 2 || !/^\+?[0-9().\s-]{7,24}$/.test(normalizedPhone) || normalizedPhone.replace(/\D/g, "").length < 7) { setMessage("Enter a valid full name and phone number."); return; }
+    setSaving(true); setMessage("Approve the profile signature in your wallet; it does not cost gas.");
+    try {
+      const signedMessage = `Bit Five profile settings\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}\nFull name: ${normalizedName}\nPhone: ${normalizedPhone}`;
+      const signature = await signMessageAsync({ message: signedMessage });
+      const response = await fetch(`${apiBaseUrl}/api/v1/profile/settings`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: address, fullName: normalizedName, phoneNumber: normalizedPhone, signature }) });
+      const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error ?? "Could not save account settings.");
+      setFullName(normalizedName); setPhoneNumber(normalizedPhone); onSaved(normalizedName); setMessage("Account details saved.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save account settings."); }
+    finally { setSaving(false); }
+  };
+  return <div className="page-stack"><section className="content-card narrow-card"><PageHeading title="Account Settings" subtitle="Your display name and phone number are stored privately off-chain." /><div className="wallet-confirm"><span className="status-dot" /> Connected wallet <b>{short(address)}</b></div><div className="settings-member-id"><small>MEMBER ID</small><b>{memberCode || "Assigning ID…"}</b></div>{!name && <button className="text-link" onClick={loadProfileName}>Load my saved profile details ↗</button>}<label className="field-label">Full name<input autoComplete="name" maxLength={100} value={name} onChange={event => setName(event.target.value)} placeholder="Enter your full name" /></label><label className="field-label">Phone number<input type="tel" autoComplete="tel" inputMode="tel" maxLength={24} value={phone} onChange={event => setPhone(event.target.value)} placeholder="e.g. +1 234 567 890" /></label><p className="helper-copy">Saving requires a free wallet signature. Your name and phone number are not written to the blockchain.</p><button className="btn primary action-wide" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save account details"}</button>{message && <p className="tx-status">{message}</p>}</section></div>;
+}
+
+function SupportDeskPage({ address, isOwner }: { address: `0x${string}`; isOwner: boolean }) {
+  const { signMessageAsync } = useSignMessage();
+  const [tickets, setTickets] = useState<any[]>([]); const [selectedId, setSelectedId] = useState<string>("");
+  const [loaded, setLoaded] = useState(false); const [compose, setCompose] = useState(false);
+  const [subject, setSubject] = useState(""); const [message, setMessage] = useState(""); const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false); const [status, setStatus] = useState("");
+  const selected = tickets.find(ticket => String(ticket.ticket_id) === selectedId);
+  const signedRequest = async (text: string) => signMessageAsync({ message: text });
+  const loadTickets = async () => {
+    setBusy(true); setStatus("Sign a read request to load your private support tickets.");
+    try {
+      const signature = await signedRequest(`Bit Five support tickets\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}`);
+      const response = await fetch(`${apiBaseUrl}/api/v1/support/list`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: address, signature }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not load support tickets.");
+      setTickets(result.tickets ?? []); setLoaded(true); setSelectedId(result.tickets?.[0] ? String(result.tickets[0].ticket_id) : ""); setStatus(result.isAdmin ? "Protocol owner view · all member inquiries" : "Your support history is private to your wallet.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Could not load support tickets."); }
+    finally { setBusy(false); }
+  };
+  const createTicket = async () => {
+    const cleanSubject = subject.trim(); const cleanMessage = message.trim();
+    if (cleanSubject.length < 4 || cleanMessage.length < 10) { setStatus("Add a subject and a message with at least 10 characters."); return; }
+    setBusy(true); setStatus("Confirm the support request signature in your wallet.");
+    try {
+      const signed = `Bit Five support ticket\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}\nSubject: ${cleanSubject}\nMessage: ${cleanMessage}`;
+      const signature = await signedRequest(signed);
+      const response = await fetch(`${apiBaseUrl}/api/v1/support/create`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: address, subject: cleanSubject, message: cleanMessage, signature }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not create the ticket.");
+      const ticket = { ...result.ticket, wallet_address: address.toLowerCase(), subject: cleanSubject, status: "open", messages: [{ senderAddress: address.toLowerCase(), senderRole: "member", message: cleanMessage, createdAt: new Date().toISOString() }] };
+      setTickets(previous => [ticket, ...previous]); setSelectedId(String(ticket.ticket_id)); setLoaded(true); setCompose(false); setSubject(""); setMessage(""); setStatus("Support ticket submitted.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Could not create the ticket."); }
+    finally { setBusy(false); }
+  };
+  const sendReply = async () => {
+    if (!selected || !reply.trim()) return;
+    setBusy(true); setStatus("Confirm your reply signature in your wallet.");
+    try {
+      const clean = reply.trim(); const ticketId = String(selected.ticket_id);
+      const signed = `Bit Five support reply\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}\nTicket: ${ticketId}\nMessage: ${clean}`;
+      const signature = await signedRequest(signed);
+      const response = await fetch(`${apiBaseUrl}/api/v1/support/message`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: address, ticketId, message: clean, signature }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not send the reply.");
+      setTickets(previous => previous.map(ticket => String(ticket.ticket_id) === ticketId ? { ...ticket, status: isOwner ? "answered" : "open", messages: [...(ticket.messages ?? []), { senderAddress: address.toLowerCase(), senderRole: isOwner ? "admin" : "member", message: clean, createdAt: new Date().toISOString() }] } : ticket));
+      setReply(""); setStatus("Reply sent.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Could not send the reply."); }
+    finally { setBusy(false); }
+  };
+  return <div className="page-stack"><section className="content-card"><div className="section-heading-row"><PageHeading title="Support Desk" subtitle="Submit an inquiry or open your existing support conversation." /><button className="btn primary" onClick={() => setCompose(value => !value)}>＋ &nbsp; {compose ? "Close form" : "New Support Ticket"}</button></div>{compose && <div className="support-compose"><label className="field-label">Subject<input maxLength={120} value={subject} onChange={event => setSubject(event.target.value)} placeholder="Briefly describe the issue" /></label><label className="field-label">Message<textarea maxLength={3000} value={message} onChange={event => setMessage(event.target.value)} placeholder="Tell the support team what happened" /></label><button className="btn primary" disabled={busy} onClick={createTicket}>{busy ? "Submitting…" : "Submit support ticket"}</button></div>}<div className="section-heading-row support-inquiries"><h3>{isOwner ? "MEMBER INQUIRIES" : "YOUR INQUIRIES"}</h3><button className="text-link" disabled={busy} onClick={loadTickets}>{loaded ? "Refresh" : "Load tickets"}</button></div>{!loaded ? <p className="empty-state">Sign a read request to securely load your support conversations.</p> : !tickets.length ? <p className="empty-state">No support tickets submitted yet.</p> : <div className="support-layout"><div className="support-ticket-list">{tickets.map(ticket => <button key={ticket.ticket_id} className={`support-ticket-item ${String(ticket.ticket_id) === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(String(ticket.ticket_id))}><b>#{ticket.ticket_id} · {ticket.subject}</b><small>{isOwner ? short(ticket.wallet_address) : "Your ticket"} · {new Date(ticket.updated_at ?? ticket.created_at).toLocaleString()}</small><span className={`ticket-status ticket-${ticket.status}`}>{ticket.status}</span></button>)}</div><div className="support-thread">{selected ? <><h3>{selected.subject}</h3><div className="support-messages">{(selected.messages ?? []).map((item: any) => <article className={`support-message ${item.senderRole === "admin" ? "from-admin" : "from-member"}`} key={item.messageId ?? `${item.createdAt}-${item.message}`}><small>{item.senderRole === "admin" ? "Bit Five Support" : short(item.senderAddress)} · {new Date(item.createdAt).toLocaleString()}</small><p>{item.message}</p></article>)}</div><label className="field-label">{isOwner ? "Reply to member" : "Reply"}<textarea maxLength={3000} value={reply} onChange={event => setReply(event.target.value)} placeholder="Write a reply" /></label><button className="btn primary" disabled={busy || !reply.trim()} onClick={sendReply}>{busy ? "Sending…" : "Send reply"}</button></> : <p className="empty-state">Select a ticket to view its conversation.</p>}</div></div>}{status && <p className="helper-copy">{status}</p>}</section></div>;
 }
 
 function ActivityList({ activity }: { activity: Activity[] }) {
