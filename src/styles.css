@@ -4064,6 +4064,35 @@ input {
     margin-bottom: 12px
 }
 
+.income-caps-locked {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 16px;
+    border: 1px dashed #304766;
+    border-radius: 10px;
+    background: #0b1727;
+}
+
+.income-caps-locked>span {
+    color: #647a98;
+    font-size: 25px;
+    line-height: 1;
+}
+
+.income-caps-locked b {
+    display: block;
+    color: #d7e4f7;
+    font-size: 13px;
+}
+
+.income-caps-locked p {
+    margin: 5px 0 0;
+    color: #93a7c0;
+    font-size: 11px;
+    line-height: 1.45;
+}
+
 .income-cap-chart {
     margin: 0 0 10px;
     padding: 12px;
@@ -4136,16 +4165,17 @@ input {
 .income-cap-track i {
     display: block;
     height: 100%;
+    width: 0;
     border-radius: 99px;
     background: linear-gradient(90deg, #0e8af0, #27d6e8)
 }
 
 .working-cap-bar {
-    width: 100%
+    width: 0
 }
 
 .roi-cap-bar {
-    width: 66.6667%;
+    width: 0;
     background: linear-gradient(90deg, #6955ef, #be78ff) !important
 }
 
@@ -4618,4 +4648,13 @@ input {
 .income-cap-bar-row.live .income-cap-track i {
     min-width: 2px;
     transition: width .4s ease
+}
+
+.income-cap-bar-row.empty .income-cap-track {
+    background: #0a1523;
+    border: 1px solid #1d2b3e;
+}
+
+.income-cap-bar-row.empty .income-cap-track i {
+    opacity: 0;
 }
