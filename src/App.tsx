@@ -156,18 +156,15 @@ export default function App() {
   const saveContactDetails = async (txHash: `0x${string}`, retry = false) => {
     if (!address || !registrationFormValid || (!retry && contactSaveAttempt.current.toLowerCase() === txHash.toLowerCase())) return;
     contactSaveAttempt.current = txHash;
-    setContactSaveStatus("signing");
+    setContactSaveStatus("saving");
     setContactSaveMessage("");
     try {
       const normalizedName = fullName.trim().replace(/\s+/g, " ");
       const normalizedPhone = phoneNumber.trim();
-      const signedMessage = `Bit Five member profile\nChain ID: ${targetChainId}\nProtocol: ${protocolAddress.toLowerCase()}\nWallet: ${address.toLowerCase()}\nFull name: ${normalizedName}\nPhone: ${normalizedPhone}\nRegistration transaction: ${txHash.toLowerCase()}`;
-      const signature = await signMessageAsync({ message: signedMessage });
-      setContactSaveStatus("saving");
       const response = await fetch(`${apiBaseUrl}/api/v1/profile/contact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: address, fullName: normalizedName, phoneNumber: normalizedPhone, transactionHash: txHash, consent: true, signature })
+        body: JSON.stringify({ walletAddress: address, fullName: normalizedName, phoneNumber: normalizedPhone, transactionHash: txHash, consent: true })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? "Could not save your contact details.");
@@ -286,7 +283,7 @@ export default function App() {
     const controller = new AbortController();
     fetch(`${apiBaseUrl}/api/v1/users/${address}/dashboard`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(d => { setActivity(d.activity ?? []); setMemberCode(d.profile?.member_code ?? ""); setActivityStatus(d.activity?.length ? "Latest on-chain events indexed from BSC Mainnet." : "No transactions yet."); })
+      .then(d => { const savedName = typeof d.profile?.full_name === "string" ? d.profile.full_name.trim() : ""; setActivity(d.activity ?? []); setMemberCode(d.profile?.member_code ?? ""); if (savedName) { setProfileDisplayName(savedName); try { localStorage.setItem(`bit5-profile-name:${targetChainId}:${protocolAddress.toLowerCase()}:${address.toLowerCase()}`, savedName); } catch { /* The API remains the source of truth. */ } } setActivityStatus(d.activity?.length ? "Latest on-chain events indexed from BSC Mainnet." : "No transactions yet."); })
       .catch(() => !controller.signal.aborted && setActivityStatus("The activity indexer is syncing."));
     fetch(`${apiBaseUrl}/api/v1/users/${address}/team`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : Promise.reject())
@@ -360,7 +357,6 @@ export default function App() {
     { key: "reports", icon: "▤", label: "Reports & Statements" },
     { key: "notifications", icon: "♧", label: "Notifications" },
     { key: "support", icon: "?", label: "Support Desk" },
-    { key: "settings", icon: "⚙", label: "Account Settings" },
     { key: "rank", icon: "◇", label: "My Rank" },
     { key: "transactions", icon: "◷", label: "Transaction History" },
   ];
@@ -442,7 +438,7 @@ function IncomeCapsCard({ principal = 0n, working = 0n, roi = 0n }: { principal?
 function Dashboard({ address, memberCode, profileDisplayName, profileNameLoadStatus, profileNameLoadMessage, loadProfileName, signMessageAsync, active, count, earnings, pendingYield, allocation, b5Positions, b5Claimable, b5Allowance, directs, volume, businessVolume, strongBusinessVolume, weakBusinessVolume, totalIncome, totalPrincipal, workingIncomeCredited, roiCredited, leadership, b5Open, unlockAt, activity, go, copied, onCopy, claim, claimB5, isPending, receiptPending, status, hash, isOwner, admin, blockTarget, setBlockTarget, blockTargetValid, blockTargetAddress, blockTargetMember, blockTargetNotFound, targetBlocked, onBlock, contactSaveStatus, contactSaveMessage, hasPendingContactSave, saveContactDetails, retryContactSave }: any) {
   const activePool = (b5Positions ?? []).reduce((sum: bigint, position: any) => sum + BigInt(position.principal ?? 0n), 0n);
   return <div className="page-stack dashboard-page">
-    <section className="balance-actions-card"><div className="balance-actions-heading"><div><div className="balance-member-identity"><small>LIVE ACCOUNT LEDGER</small><span>ID: {memberCode || "Assigning ID…"}</span>{profileDisplayName ? <b>{profileDisplayName}</b> : <button className="profile-name-action" onClick={() => go("settings")}>＋ Add your name</button>}</div>{profileNameLoadMessage && <small className="profile-name-error">{profileNameLoadMessage}</small>}<div className="home-balance-main"><small>Available withdrawable balance</small><h2>${money(earnings)} <span>USDT</span></h2></div><div className="home-active-pool"><span>Active pool</span><b>${money(activePool)} USDT</b></div></div><span className="balance-ledger-status">BSC · LIVE</span></div><div className="balance-actions-metrics home-top-metrics"><div><small>Total earnings</small><b>${money(totalIncome)} USDT</b></div><i>•</i><div><small>Pending daily ROI</small><b>${money(pendingYield)} USDT</b></div></div><div className="balance-action-buttons"><button className="btn primary" onClick={() => go("topup")}>＋ &nbsp; Deposit USDT</button><button className="btn outline" onClick={() => go("withdraw")}>↗ &nbsp; Withdraw</button></div></section>
+    <section className="balance-actions-card"><div className="balance-actions-heading"><div><div className="balance-member-identity"><small>LIVE ACCOUNT LEDGER</small><span>ID: {memberCode || "Assigning ID…"}</span><b>{profileDisplayName || "Member"}</b></div><div className="home-balance-main"><small>Available withdrawable balance</small><h2>${money(earnings)} <span>USDT</span></h2></div><div className="home-active-pool"><span>Active pool</span><b>${money(activePool)} USDT</b></div></div><span className="balance-ledger-status">BSC · LIVE</span></div><div className="balance-actions-metrics home-top-metrics"><div><small>Total earnings</small><b>${money(totalIncome)} USDT</b></div><i>•</i><div><small>Pending daily ROI</small><b>${money(pendingYield)} USDT</b></div></div><div className="balance-action-buttons"><button className="btn primary" onClick={() => go("topup")}>＋ &nbsp; Deposit USDT</button><button className="btn claim-income" disabled={!active || isPending || receiptPending || (pendingYield ?? 0n) === 0n} onClick={claim}>{isPending ? "Confirm…" : receiptPending ? "Updating…" : (pendingYield ?? 0n) === 0n ? "No income ready" : "↻ Claim income"}</button><button className="btn outline" onClick={() => go("withdraw")}>↗ &nbsp; Withdraw</button></div></section>
     <section className="content-card referral-panel"><div><span className="mini-icon">↗</span><div><h3>Your referral link</h3><p>{active ? "Share to invite a new member. Their registration and sponsor are recorded on-chain." : "Activate your first package to enable your referral link."}</p></div></div><div className="copy-row"><input readOnly value={active ? `${window.location.origin}/?ref=${address}` : "Referral link inactive until ID activation"} /><button className="btn outline" disabled={!active} onClick={onCopy}>{active ? (copied ? "Copied ✓" : "Copy referral link") : "Activate ID to unlock"}</button></div></section>
     <div className="dashboard-top-token"><B5AllocationPanel positions={b5Positions} total={allocation} claimable={b5Claimable} treasuryAllowance={b5Allowance} claimsEnabled={b5Open} pending={isPending || receiptPending} claim={claimB5} /></div>
     {contactSaveStatus === "idle" && hasPendingContactSave && <div className="notice notice-amber">Registration is confirmed. Sign once with your wallet to save your name and phone number to the member database. This signature does not send a transaction or cost gas. <button className="inline-action" onClick={saveContactDetails}>Sign &amp; save details</button></div>}{contactSaveStatus === "signing" && <div className="notice notice-amber">Confirm the profile signature in your wallet. It does not send a transaction or cost gas.</div>}{contactSaveStatus === "saving" && <div className="notice notice-amber">Saving your member name and phone number…</div>}{contactSaveStatus === "saved" && <div className="notice notice-green">{contactSaveMessage}</div>}{contactSaveStatus === "error" && <div className="notice notice-amber">{contactSaveMessage} <button className="inline-action" onClick={retryContactSave}>Retry save</button></div>}<section className="stat-grid dashboard-client-stats"><Stat label="Total business" value={`$${money(businessVolume)}`} note="Team business package volume" icon="▤" /><Stat label="Strong & weaker leg business" dualValues={[{ label: "Strong", value: `$${money(strongBusinessVolume)}` }, { label: "Weaker", value: `$${money(weakBusinessVolume)}` }]} note="On-chain branch totals" icon="↔" /><Stat tone="rank" label="Current rank" value={Number(leadership ?? 0) ? `Bit-${leadership}` : "Unranked"} note="Leadership qualification" icon="◇" /><Stat label="Total income" value={`$${money(totalIncome)}`} note="Lifetime credited income" icon="$" /></section>
