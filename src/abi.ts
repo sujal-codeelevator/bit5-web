@@ -22,6 +22,7 @@ export const protocolAbi = [
   { type: "function", name: "branchBusinessVolume", stateMutability: "view", inputs: [{ type: "address" }, { type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "workingIncomeCredited", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "totalRoiCredited", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "totalPrincipal", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "leadershipRank", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint32" }] },
   { type: "function", name: "b5Allocation", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "b5UnlockAt", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },

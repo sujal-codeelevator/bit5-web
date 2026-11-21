@@ -4606,3 +4606,16 @@ input {
 .stat-dual-values .dual-weaker,.stat-dual-values .dual-weaker b{color:#ffb547!important}
 
 .stat-card b.stat-value-rank{color:#ffd24a!important;text-shadow:0 0 14px rgba(255,210,74,.35)}
+
+.income-cap-bar-row.live {
+    grid-template-columns: 94px minmax(0, 1fr) 34px
+}
+
+.income-cap-bar-row.live .income-cap-track {
+    background: #0a1523
+}
+
+.income-cap-bar-row.live .income-cap-track i {
+    min-width: 2px;
+    transition: width .4s ease
+}
